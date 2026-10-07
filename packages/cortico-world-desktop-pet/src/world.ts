@@ -57,6 +57,8 @@ const SAMPLE_RATE = 16_000;
 const WALK_TIMEOUT_MS = 30_000;
 /** Touches of one kind closer than this are reported as one event with a count. */
 const TOUCH_MERGE_MS = 2500;
+/** How long a name for the toy can be; it appears inside event text. */
+const TOY_NAME_MAX = 12;
 /** How long a confirmation bubble waits for an answer. */
 const CONFIRM_TIMEOUT_MS = 60_000;
 /** History events read per chat page load; the page asks for the ones before by cursor. */
@@ -163,6 +165,8 @@ export interface DesktopPetWorldOptions {
   botName?: string;
   /** PNG shown as the avatar in the menu header, when it exists. */
   avatarFile?: string;
+  /** Where the dressing page keeps the toy's picture, served at `/api/toy`. */
+  toyFile?: string;
   controls?: PetBotControls;
   /** Reads the talk key; tests pass a scripted one. */
   watchHotkey?: typeof watchHotkey;
@@ -269,7 +273,7 @@ export class DesktopPetWorld implements World {
   private prefsTimer: NodeJS.Timeout | null = null;
   /** Where the pet window last said the pet stands, measured as `petX` is; written by `savePosition` on stop. */
   private standX: number | null = null;
-  /** A basin resting spot the bot has not been told yet, and the newer one that arrived while it waited. */
+  /** A toy resting spot the bot has not been told yet, and the newer one that arrived while it waited. */
   private propPending: number | null = null;
   private propLatest: number | null = null;
   private thinking = false;
@@ -313,6 +317,8 @@ export class DesktopPetWorld implements World {
       onSkin: (skin) => this.saveSkin(skin),
       onPrefs: (prefs) => this.savePrefs(prefs),
       avatarFile: opts.avatarFile,
+      toyFile: opts.toyFile,
+      onToySaved: () => this.syncPrefs(),
       packs: () => this.packs(),
     });
   }
@@ -473,7 +479,7 @@ export class DesktopPetWorld implements World {
    * first, then a `delivered` record the history places the message at.
    */
   onEventsSettled(events: readonly EventEnvelope[], outcome: 'delivered' | 'discarded'): void {
-    // a basin report the bot has been told frees its place for the newest resting spot, if one came while it waited
+    // a toy report the bot has been told frees its place for the newest resting spot, if one came while it waited
     if (events.some((e) => e.type === 'desktop-pet.prop')) {
       const next = this.propLatest;
       this.propPending = null;
@@ -594,7 +600,7 @@ export class DesktopPetWorld implements World {
       roam: this.quiet?.roam ?? this.cfg.roam,
       sound: this.quiet?.sound ?? this.cfg.sound,
       sounds: this.cfg.sounds,
-      basin: this.cfg.basin,
+      toy: { ...this.cfg.toy, rev: this.toyRev() },
       theme: this.cfg.theme,
       rememberPosition: this.cfg.rememberPosition,
       // read by the page from `init` only
@@ -611,6 +617,15 @@ export class DesktopPetWorld implements World {
       thinking: this.thinking,
       bot: this.botInfo(),
     };
+  }
+
+  /** When the toy's picture was last replaced, so a page reloads it; 0 while the built-in one shows. */
+  private toyRev(): number {
+    try {
+      return this.opts.toyFile ? Math.trunc(statSync(this.opts.toyFile).mtimeMs) : 0;
+    } catch {
+      return 0;
+    }
   }
 
   private botInfo(): Record<string, unknown> {
@@ -693,6 +708,11 @@ export class DesktopPetWorld implements World {
       const ids = prefs.hoverButtons.filter((id): id is string => typeof id === 'string' && (PET_ACTIONS as readonly string[]).includes(id));
       patch.hoverButtons = hoverButtonList(ids.slice(0, MAX_HOVER_BUTTONS).join(',')).join(',');
     }
+    const toy = prefs.toy as Record<string, unknown> | undefined;
+    if (toy && typeof toy === 'object' && typeof toy.name === 'string') {
+      const name = toy.name.trim().slice(0, TOY_NAME_MAX);
+      if (name) patch.toy = { name };
+    }
     const mic = prefs.micSettings as Record<string, unknown> | undefined;
     if (mic && typeof mic === 'object') {
       const m: { mode?: MicMode; hotkey?: string; deviceId?: string } = {};
@@ -722,15 +742,16 @@ export class DesktopPetWorld implements World {
   }
 
   /**
-   * Where the basin came to rest, for the bot to walk to and kick it. It rides the next batch rather than
-   * waking the bot, so it can wait there a while while the basin keeps getting kicked: one report waits at
-   * a time, and a newer resting spot takes the place of the one still undelivered.
+   * Where the toy came to rest, for the bot to walk to and kick it. It rides the next batch rather than
+   * waking the bot, so it can wait there a while while the toy keeps getting kicked: one report waits at
+   * a time, and a newer resting spot takes the place of the one still undelivered. What it can be done to
+   * is said here rather than in the environment prompt, so choosing a new toy needs no new session.
    */
   private reportProp(x: number): void {
     if (!this.host) return;
     if (this.propPending !== null) { this.propLatest = x; return; }
     this.propPending = x;
-    void this.push('desktop-pet.prop', 'desktop-pet.prop', `[环境] 铁盆停在横向 ${pct(x)} 处。`, 'piggyback');
+    void this.push('desktop-pet.prop', 'desktop-pet.prop', `[环境] ${this.cfg.toy.name}停在横向 ${pct(x)} 处:走到那儿或再往那边一点,经过时会顺脚把它踢飞。`, 'piggyback');
   }
 
   private onPage(msg: PageMessage): void {
@@ -752,7 +773,7 @@ export class DesktopPetWorld implements World {
           ? `走到了屏幕横向 ${at} 处。`
           : w.stopping ? `走到屏幕横向 ${at} 处停下了。`
           : msg.by === 'drag' ? `没走到:走到 ${at} 处时被${this.cfg.user}拎起来了。`
-          : msg.by === 'basin' ? `没走到:走到 ${at} 处时被铁盆砸中了,你晕了一会儿。`
+          : msg.by === 'toy' ? `没走到:走到 ${at} 处时被${this.cfg.toy.name}砸中了,你晕了一会儿。`
           : `没走到:走到 ${at} 处时换成了别的动作(${String(msg.by)})。`);
         return;
       }
@@ -780,16 +801,9 @@ export class DesktopPetWorld implements World {
         return;
       }
       case 'prop': {
-        // where the basin came to rest; a scenery update, so it never wakes the bot on its own
-        if (!this.cfg.basin.enabled || typeof msg.x !== 'number' || !Number.isFinite(msg.x)) return;
+        // where the toy came to rest; a scenery update, so it never wakes the bot on its own
+        if (!this.cfg.toy.enabled || typeof msg.x !== 'number' || !Number.isFinite(msg.x)) return;
         this.reportProp(Math.min(1, Math.max(0, msg.x)));
-        return;
-      }
-      case 'propHit': {
-        // the basin came down on the body: an interaction like the others, riding the next batch
-        if (!this.cfg.basin.enabled) return;
-        const b = this.opts.botName || 'Coo';
-        void this.push('desktop-pet.touch', 'desktop-pet.touch', `[互动] ${this.cfg.user}把铁盆砸到了你身上,你被砸晕了一会儿。`, 'piggyback', { meta: { chat: `你用铁盆砸中了 ${b}` } });
         return;
       }
       case 'devices': {
@@ -1468,9 +1482,6 @@ export class DesktopPetWorld implements World {
       'pet.body': this.bodyText(this.currentPack()),
       'pet.dress': dressTable(this.packs()),
       'pet.self': this.cfg.selfAdjust ? '开着' : '关着',
-      'pet.basin': this.cfg.basin.enabled
-        ? `地上有只铁盆:${this.cfg.user}可以把它拎起来甩。它每次停下来的位置会以 \`[环境]\` 事件告诉你(横向百分比):想踢就用 \`pet_walk_to\` 走到那个位置或再往那边一点,走路经过时你会顺脚把它踢飞,停在它前面就踢不着了。它砸到你你会被砸晕,坐在地上晕好一会儿。`
-        : '',
       'pet.chat': this.opts.controls?.openChat
         ? '应用的「对话」页按时间列出这些气泡、对方的话,以及你两句话之间调用过的工具名;对方也能在那里打字、发图片(同样是 `[打字]` 事件,图片接在正文后),回答 `pet_ask`。'
         : '',
@@ -1520,7 +1531,6 @@ export class DesktopPetWorld implements World {
           { name: 'pet.body', description: '当前形象的样子' },
           { name: 'pet.dress', description: 'pet_set 能选的形象与打扮', multiline: true },
           { name: 'pet.self', description: '「允许自己调整」开着还是关着' },
-          { name: 'pet.basin', description: '铁盆开着时对它的说明;关掉时为空' },
           { name: 'pet.chat', description: '应用提供对话页时,对它的说明;没有时为空' },
         ],
       }],

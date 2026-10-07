@@ -6,6 +6,8 @@ import { DesktopPetWorld, modelsDirFor, type PetBotControls } from './world.ts';
 
 /** The console keeps the bot's avatar here, in the deployment directory. */
 const AVATAR_FILE = 'avatar.png';
+/** The toy's picture the person chooses on the dressing page, beside it. */
+const TOY_FILE = 'toy.png';
 
 export interface DesktopPetAssembly {
   /** Run controls for the menu header; see `PetBotControls`. */
@@ -40,6 +42,7 @@ export function desktopPetDefinition(assembly: DesktopPetAssembly = {}): WorldDe
         modelsDir: () => modelsDirFor(modelsRoot()),
         botName: ctx.botName,
         avatarFile: join(ctx.botDir, AVATAR_FILE),
+        toyFile: join(ctx.botDir, TOY_FILE),
         controls: assembly.controls,
         packRoots: () => [join(ctx.dataDir, 'figures'), ...assembly.packRoots?.() ?? []],
         onBotChange: () => assembly.onBotChange?.(),

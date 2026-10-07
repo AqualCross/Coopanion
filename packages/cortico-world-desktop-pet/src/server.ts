@@ -6,6 +6,8 @@
  *   the figure; in a browser tab it draws a floor.
  * - `/dress`: the dressing page; changes go through `POST /api/skin` and `POST /api/prefs`.
  * - `/api/avatar`: the bot's avatar for the menu header, 404 until one exists.
+ * - `/api/toy`: the toy's picture the person chose on the dressing page, which posts it there; with
+ *   none saved it redirects to the built-in one.
  * - `/api/figures`: the figure packs (src/packs.ts) the pages may load, Coo's first; `/packs/<id>/…`:
  *   an installed pack's files (a built-in one is under `/web/`).
  * - `/figure-frame`: the sandbox a pack's code runs in. Its own CSP sandboxes it (an opaque
@@ -19,7 +21,7 @@
  *   Binary frames from the pet connection are 16 kHz mono PCM16 microphone audio.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { packFile, type FigurePack } from './packs.ts';
@@ -57,6 +59,10 @@ export interface PetServerOptions {
   onPrefs(prefs: Record<string, unknown>): void;
   /** PNG served at `/api/avatar`. */
   avatarFile?: string;
+  /** The toy's picture the person chose, served at `/api/toy`; absent or cleared falls back to the built-in one. */
+  toyFile?: string;
+  /** A toy picture was saved or cleared, so the World tells the pages to take it. */
+  onToySaved?(): void;
   /** The figure packs, looked up again for each request. */
   packs?(): FigurePack[];
 }
@@ -223,6 +229,35 @@ export class PetServer {
       res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-cache' }).end(bytes);
       return;
     }
+    if (req.method === 'GET' && path === '/api/toy') {
+      const bytes = this.opts.toyFile ? await readFile(this.opts.toyFile).catch(() => null) : null;
+      if (!bytes) { res.writeHead(302, { location: '/web/props/basin.png' }).end(); return; }
+      res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-cache' }).end(bytes);
+      return;
+    }
+    if (req.method === 'POST' && path === '/api/toy') {
+      const body = await readBody(req, TOY_MAX_BODY);
+      const msg = body ? parse(body) : null;
+      if (!msg) return json(res, 400, { error: 'bad json' });
+      const png = msg.reset === true ? null : pngBytes(msg.data);
+      if (msg.reset !== true && !png) return json(res, 400, { error: 'not a png' });
+      const file = this.opts.toyFile;
+      if (!file) return json(res, 501, { error: 'no place to keep it' });
+      try {
+        if (png) {
+          // write beside itself and move over: a page reading mid-save never sees half a picture
+          const tmp = `${file}.tmp`;
+          await writeFile(tmp, png);
+          await rename(tmp, file);
+        } else {
+          await rm(file, { force: true });
+        }
+      } catch (err) {
+        return json(res, 500, { error: String((err as Error)?.message ?? err) });
+      }
+      this.opts.onToySaved?.();
+      return json(res, 200, { ok: true });
+    }
     if (req.method === 'POST' && (path === '/api/skin' || path === '/api/prefs')) {
       const body = await readBody(req);
       const msg = body ? parse(body) : null;
@@ -273,13 +308,25 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 }
 
 const MAX_BODY = 64 * 1024;
-function readBody(req: IncomingMessage): Promise<string | null> {
+/** A toy's picture arrives as one base64 PNG; the dressing page keeps it under 384 px on its long side. */
+const TOY_MAX_BODY = 4 * 1024 * 1024;
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** The base64 the page sent as PNG bytes, or null when it is not a PNG. */
+function pngBytes(data: unknown): Buffer | null {
+  if (typeof data !== 'string') return null;
+  const text = data.startsWith('data:') ? data.slice(data.indexOf(',') + 1) : data;
+  const bytes = Buffer.from(text, 'base64');
+  return bytes.length > PNG.length && bytes.subarray(0, PNG.length).equals(PNG) ? bytes : null;
+}
+
+function readBody(req: IncomingMessage, max = MAX_BODY): Promise<string | null> {
   return new Promise((done) => {
     let size = 0;
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => {
       size += c.length;
-      if (size > MAX_BODY) { req.destroy(); done(null); return; }
+      if (size > max) { req.destroy(); done(null); return; }
       chunks.push(c);
     });
     req.on('end', () => done(Buffer.concat(chunks).toString('utf8')));

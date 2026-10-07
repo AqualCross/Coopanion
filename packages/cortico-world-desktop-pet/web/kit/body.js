@@ -14,7 +14,7 @@
  */
 export { createRig } from './rig.js';
 // the stage's one gravity engine: the body's throws and drops fall and bounce on the same
-// integrator (and the same constants) as the props beside it, like the kickable basin
+// integrator (and the same constants) as the props beside it, like the kickable toy
 import { stepAir, clampThrow, createVelocitySampler } from './physics.js';
 
 export const f = n => Math.round(n * 10) / 10;

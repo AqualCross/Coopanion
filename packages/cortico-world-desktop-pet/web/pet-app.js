@@ -13,7 +13,7 @@ import { applyTheme, clamp, f, ICONS } from './ui.js';
 import { createSfx } from './sound.js';
 import { COO_CSS, mini, normalizeSkin, skinCss } from './coo/coo.js';
 import { loadBody } from './body-host.js';
-import { createBasin } from './props/basin.js';
+import { createToy } from './props/toy.js';
 import { createInteraction } from './props/interaction.js';
 
 const $ = (s) => document.querySelector(s);
@@ -39,8 +39,8 @@ const prefs = {
   doubleClickChat: false,
   /** Draw at the moving frame rate while the body rests too. */
   lockFrameRate: false,
-  /** The stage's iron basin and its own sounds; the World's config decides, and it arrives with `init`. */
-  basin: { enabled: false, sound: true },
+  /** The stage's toy: whether it is there, whether it rings, and when its picture was last replaced. */
+  toy: { enabled: false, sound: true, rev: 0 },
 };
 const sfx = createSfx();
 if (host) sfx.unlock();
@@ -49,21 +49,21 @@ else ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, ()
 const floorGap = () => (host ? 2 : 48);
 const bounds = () => ({ W: innerWidth, H: innerHeight, floorY: innerHeight - floorGap(), S: .42 * prefs.scale });
 /**
- * Props that share the stage and its one gravity engine with the body (web/props/basin.js): trusted
+ * Props that share the stage and its one gravity engine with the body (web/props/toy.js): trusted
  * page code, drawn straight on the stage, so unlike a figure pack they may stand anywhere on the
  * floor and take the pointer wherever they are. `heldProp` is the one under a press that has not been
  * let go of; the window keeps the mouse meanwhile, as for the body.
  */
-const props = [createBasin({ layer: $('#propLayer'), bounds, sfx, src: '/web/props/basin.png' })];
-// the basin is away until `init` says the config has it: showing it first would flash one the person turned off
-for (const pr of props) pr.setVisible(prefs.basin.enabled);
+const props = [createToy({ layer: $('#propLayer'), bounds, sfx, src: '/api/toy?v=0' })];
+// the toy is away until `init` says the config has it: showing it first would flash one the person turned off
+for (const pr of props) pr.setVisible(prefs.toy.enabled);
 let heldProp = null;
 const propAt = (p) => props.find((pr) => pr.hit(p)) ?? null;
 const propCursor = () => props.map((pr) => pr.cursor).find(Boolean) ?? '';
 /**
  * The body↔prop contact (props/interaction.js): the page is the one place that sees both the body's
- * reported layout and the basin's state, so it lets them touch — a walk kicks the basin, a thrown
- * basin strikes the body. It acts through these callbacks and moves nothing itself.
+ * reported layout and the toy's state, so it lets them touch — a walk kicks the toy, a thrown
+ * toy strikes the body. It acts through these callbacks and moves nothing itself.
  */
 const interact = createInteraction();
 /**
@@ -81,10 +81,11 @@ const io = {
     // crouching cannot take the dizzy, and saying so would be a lie about a performance that never came
     const l = at();
     if (!l || l.mode === 'drag' || l.mode === 'air' || l.mode === 'crouch') return;
-    dizzyBy = 'basin';
+    // being hit is performed, not reported: it goes for a kick on its own, so a strike tells the bot
+    // nothing it did not do to itself, and left running it would talk to itself all day
+    dizzyBy = 'toy';
     body?.do('dizzy');
     dizzyBy = '';
-    send({ t: 'propHit' });
   },
 };
 /**
@@ -211,8 +212,8 @@ function reportPosition() {
 }
 
 /**
- * Where the basin lies once it stops moving: the bot is told this so it can walk to it and kick it, and
- * one report per stop is enough — the basin only moves when someone kicks or throws it.
+ * Where the toy lies once it stops moving: the bot is told this so it can walk to it and kick it, and
+ * one report per stop is enough — the toy only moves when someone kicks or throws it.
  */
 let sentPropX = null;
 function reportProp() {
@@ -230,10 +231,11 @@ function applyPrefs(p) {
   if (p.roam) { prefs.roam = p.roam; body?.set({ roam: p.roam }); }
   if (typeof p.sound === 'boolean') { prefs.sound = p.sound; sfx.set(p.sound); }
   if (p.sounds && typeof p.sounds === 'object') sfx.configure({ kinds: p.sounds, snoreSeconds: p.sounds.snoreSeconds });
-  if (p.basin && typeof p.basin === 'object') {
-    prefs.basin = { enabled: p.basin.enabled !== false, sound: p.basin.sound !== false };
-    for (const pr of props) { pr.setVisible(prefs.basin.enabled); pr.setSound(prefs.basin.sound); }
-    if (!prefs.basin.enabled) heldProp = null;
+  if (p.toy && typeof p.toy === 'object') {
+    prefs.toy = { enabled: p.toy.enabled !== false, sound: p.toy.sound !== false, rev: typeof p.toy.rev === 'number' ? p.toy.rev : 0 };
+    const src = `/api/toy?v=${prefs.toy.rev}`;
+    for (const pr of props) { pr.setVisible(prefs.toy.enabled); pr.setSound(prefs.toy.sound); pr.setSrc(src); }
+    if (!prefs.toy.enabled) heldProp = null;
   }
   if (p.theme === 'dark' || p.theme === 'light') { prefs.theme = p.theme; applyTheme(p.theme); body?.set({ theme: p.theme }); }
   if (typeof p.scale === 'number') { prefs.scale = p.scale; body?.set({ bounds: bounds() }); for (const pr of props) pr.setBounds(bounds()); }
