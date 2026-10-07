@@ -13,6 +13,9 @@
  * happens to the body is told through `opts.onEvent`; the page around the frame does the rest.
  */
 export { createRig } from './rig.js';
+// the stage's one gravity engine: the body's throws and drops fall and bounce on the same
+// integrator (and the same constants) as the props beside it, like the kickable basin
+import { stepAir, clampThrow, createVelocitySampler } from './physics.js';
 
 export const f = n => Math.round(n * 10) / 10;
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -145,7 +148,11 @@ export function createPet(els, opts) {
     pulse: null, walkId: 0, walkWord: null, listening: false, thinking: false, placed: false, noteAt: 0, tearN: 0,
     cursor: '',
   };
-  const pointer = { x: -1e4, y: -1e4, inside: false, vx: 0, samples: [] };
+  const pointer = { x: -1e4, y: -1e4, inside: false, vx: 0 };
+  /** The grab's recent pointer positions, for the release velocity (kit/physics.js). */
+  const sampler = createVelocitySampler();
+  /** Scratch state handed to the shared engine each air frame (the body keeps x in `x`, y in `fy`). */
+  const airScratch = { x: 0, y: 0, vx: 0, vy: 0 };
   let press = null, strokeAcc = 0, petCool = 0;
   const P = [];
   const anchors = () => ({ ...ANCHORS, ...custom?.anchors });
@@ -451,16 +458,16 @@ export function createPet(els, opts) {
         break;
       }
       case 'air': {
-        pet.vy += 2300 * dt;
-        pet.vx *= Math.exp(-dt * .4);
-        pet.x += pet.vx * dt; pet.fy += pet.vy * dt;
-        if (pet.x < minX()) { pet.x = minX(); pet.vx = Math.abs(pet.vx) * .55; pet.sqv += .6; }
-        if (pet.x > maxX()) { pet.x = maxX(); pet.vx = -Math.abs(pet.vx) * .55; pet.sqv += .6; }
-        if (pet.fy - 250 * S < 0 && pet.vy < 0) { pet.fy = 250 * S; pet.vy = Math.abs(pet.vy) * .3; }
+        // the shared engine (kit/physics.js) moves the body; the squash on a wall hit and the
+        // landing itself stay the kit's business
+        airScratch.x = pet.x; airScratch.y = pet.fy; airScratch.vx = pet.vx; airScratch.vy = pet.vy;
+        const ev = stepAir(airScratch, dt, { minX: minX(), maxX: maxX(), ceilY: 250 * S, floorY });
+        pet.x = airScratch.x; pet.fy = airScratch.y; pet.vx = airScratch.vx; pet.vy = airScratch.vy;
+        if (ev?.side) pet.sqv += .6;
         sqT = -Math.min(.12, Math.abs(pet.vy) / 6000);
         tiltT = clamp(pet.vx * .025, -30, 30);
         tk = 70; tc = 8;
-        if (pet.fy >= floorY && pet.vy > 0) land();
+        if (ev?.land != null) land(ev.land);
         break;
       }
       case 'land': {
@@ -604,8 +611,8 @@ export function createPet(els, opts) {
     pet._fc = fc; pet._fname = fname;
   }
 
-  function land() {
-    const impact = pet.vy, kind = pet.airKind;
+  function land(impact) {
+    const kind = pet.airKind;
     pet.fy = floorY; pet.vy = 0; pet.vx = 0;
     pet.sqv += clamp(impact * .0024, .8, 4.5);
     play('land', 'move', kind !== 'jump' && impact > 1000);
@@ -677,17 +684,11 @@ export function createPet(els, opts) {
 
   /* pointer: stage-pixel coordinates; `p.t` is when it happened (ms), else now */
   const now = (p) => p?.t ?? performance.now();
-  function velocity() {
-    const s = pointer.samples;
-    if (s.length < 2) return { x: 0, y: 0 };
-    const a = s[0], b = s[s.length - 1], dt = Math.max(.016, (b.t - a.t) / 1000);
-    return { x: (b.x - a.x) / dt, y: (b.y - a.y) / dt };
-  }
   function pointerDown(p) {
     Object.assign(pointer, { x: p.x, y: p.y, inside: true });
     if (!hitPet(p) || pet.mode === 'air') return false;
     press = { x: p.x, y: p.y, t: now(p) };
-    pointer.samples = [{ t: now(p), x: p.x, y: p.y }];
+    sampler.reset({ t: now(p), x: p.x, y: p.y });
     return true;
   }
   /** Returns the cursor the stage should show. */
@@ -695,9 +696,8 @@ export function createPet(els, opts) {
     const t = now(p);
     const ddx = p.x - pointer.x, ddy = p.y - pointer.y;
     Object.assign(pointer, { x: p.x, y: p.y, inside: true });
-    pointer.samples.push({ t, x: p.x, y: p.y });
-    while (pointer.samples.length > 2 && t - pointer.samples[0].t > 110) pointer.samples.shift();
-    pointer.vx = lerp(pointer.vx, velocity().x, .35);
+    sampler.push({ t, x: p.x, y: p.y });
+    pointer.vx = lerp(pointer.vx, sampler.get().x, .35);
 
     if (press && pet.mode !== 'drag' && Math.hypot(p.x - press.x, p.y - press.y) > 6) {
       const scruff = toStage(128, 36);
@@ -727,10 +727,10 @@ export function createPet(els, opts) {
     if (pet.mode === 'drag') {
       // hand over from the scruff anchor to the feet anchor without a visual jump
       const foot = toStage(128, 256);
-      const v = velocity();
+      const v = clampThrow(sampler.get().x, sampler.get().y);
       pet.x = clamp(foot.x, minX(), maxX());
       pet.fy = Math.min(floorY, foot.y);
-      pet.vx = clamp(v.x, -1800, 1800); pet.vy = clamp(v.y, -1800, 1400);
+      pet.vx = v.x; pet.vy = v.y;
       pet.airKind = 'throw';
       const speed = Math.hypot(v.x, v.y);
       if (speed > 700) play('whoosh', 'move');
@@ -760,7 +760,8 @@ export function createPet(els, opts) {
   function dropAt(p) {
     press = null;
     if (pet.mode !== 'drag') return;
-    Object.assign(pointer, { x: p.x, y: p.y, vx: 0, samples: [] });
+    Object.assign(pointer, { x: p.x, y: p.y, vx: 0 });
+    sampler.reset(null);
     pet.x = clamp(p.x, minX(), maxX());
     pet.fy = Math.min(floorY, p.y + 220 * S);
     pet.vx = 0; pet.vy = 0;
@@ -776,7 +777,7 @@ export function createPet(els, opts) {
     if (pet.mode !== 'drag') return;
     pet.dx += dx; pet.dy += dy; pet.x += dx;
     pointer.x += dx; pointer.y += dy;
-    for (const s of pointer.samples) { s.x += dx; s.y += dy; }
+    sampler.shift(dx, dy);
     if (press) { press.x += dx; press.y += dy; }
   }
   function pointerLeave() { if (!press) pointer.inside = false; }

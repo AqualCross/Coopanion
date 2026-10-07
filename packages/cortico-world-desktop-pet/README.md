@@ -35,7 +35,8 @@ bot 在屏幕底边有一个小身体,由一个形象包提供(见下文):内置
 | `desktop-pet.speech` | `[语音] 伙伴:…` | flush |
 | `desktop-pet.message` | `[打字] 伙伴:…`(悬停按钮;`worlds.desktop-pet.doubleClickChat` 打开时也可双击;或对话页,可附图片) | preempt |
 | `desktop-pet.answer` | `[回答] 伙伴回答「问题」:选了第 2 项「…」` / 自己写的 / 关掉没答 | flush,关掉没答为 debounce |
-| `desktop-pet.touch` | `[互动] 伙伴戳了你 3 下` / 摸了摸 / 拎起来甩了出去 / 摔晕 | `worlds.desktop-pet.touch.wakeOn` 选中的种类 debounce,其余 piggyback |
+| `desktop-pet.touch` | `[互动] 伙伴戳了你 3 下` / 摸了摸 / 拎起来甩了出去 / 摔晕 / 把铁盆砸到了你身上 | `worlds.desktop-pet.touch.wakeOn` 选中的种类 debounce,其余 piggyback |
+| `desktop-pet.prop` | `[环境] 铁盆停在横向 42% 处。` | piggyback;没送达前只挂一条,后停下的位置换掉先前那条 |
 | `desktop-pet.figure` | `[形象] 你现在的样子:…`(对方换了形象或打扮;bot 用 `pet_set` 自己换的不报) / `[形象] …没能显示出来(原因),你现在是 Coo 的样子` | 换装 debounce,显示失败 flush |
 
 每条事件的正文前是对方那边的本地时间 `[HH:MM]`;一次运行的第一条、换了日期后的第一条带日期和星期 `[MM-DD 周X HH:MM]`。

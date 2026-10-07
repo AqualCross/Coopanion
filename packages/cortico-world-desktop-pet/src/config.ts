@@ -78,6 +78,13 @@ export interface DesktopPetConfigSection extends WorldSection {
   /** All of the pet's sounds; `sounds` picks among them while this is on. */
   sound: boolean;
   sounds: SoundSettings;
+  /** The iron basin on the stage: the pet kicks it, it is thrown and lands, and it rings doing so. */
+  basin: {
+    /** Off takes the basin off the stage. */
+    enabled: boolean;
+    /** Its clangs, grabs and whooshes; the page's sound switch mutes them along with everything else. */
+    sound: boolean;
+  };
   theme: PetTheme;
   /** Start each run where the pet stood when the World last stopped. */
   rememberPosition: boolean;
@@ -127,6 +134,7 @@ export const DESKTOP_PET_DEFAULTS: DesktopPetConfigSection = {
   roam: 'calm',
   sound: true,
   sounds: { move: true, touch: true, face: true, snore: true, talk: true, ui: true, snoreSeconds: 0 },
+  basin: { enabled: true, sound: true },
   theme: 'dark',
   rememberPosition: false,
   petX: null,
@@ -166,6 +174,8 @@ export const DESKTOP_PET_CONFIG_GROUP: ConfigGroup = {
       [`${K}.hoverButtons`]: { type: 'string', title: '悬停按钮', description: `鼠标停在桌宠身上时旁边出现的按钮,最多 ${MAX_HOVER_BUTTONS} 个,逗号分隔:${PET_ACTIONS.join(', ')}。`, 'x-hot': true },
       [`${K}.doubleClickChat`]: { type: 'boolean', title: '双击打字', description: '双击桌宠打开打字框。', 'x-hot': true },
       [`${K}.selfAdjust`]: { type: 'boolean', title: '允许自己调整', description: '桌宠可以自己换形象和装扮、改走动和呼噜;改音效、大小、黑白模式、悬停按钮和对你的称呼前先问你。关掉后这些它都改不了。', 'x-hot': true },
+      [`${K}.basin.enabled`]: { type: 'boolean', title: '铁盆', description: '舞台地面上放一只铁盆:可以拎起来甩,桌宠路过顺脚踢飞、隔一阵自己走过去踢,被砸到会有反应。关掉后盆从舞台上收走。', 'x-hot': true },
+      [`${K}.basin.sound`]: { type: 'boolean', title: '盆的响声', description: '盆被踢、被拎起、落地和撞墙的响声。总音效关掉时它也跟着没声。', 'x-hot': true },
       [`${K}.window.enabled`]: { type: 'boolean', title: '启动时打开桌宠窗口', 'x-hot': false },
       [`${K}.window.scale`]: { type: 'number', title: '大小', minimum: .5, maximum: 2, multipleOf: .05, 'x-hot': true },
       [`${K}.window.lockFrameRate`]: { type: 'boolean', title: '锁定 60 帧', description: '一直按每秒 60 帧画桌宠。关着时站着、坐着、睡着降到每秒 30 帧,走动、被拎着、跳起时仍是 60 帧。', 'x-hot': true },

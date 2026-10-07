@@ -65,6 +65,58 @@ describe('tools without a page', () => {
 });
 
 describe('with a pet page', () => {
+  it('carries the basin switches to the page, and a console change reaches it', async () => {
+    const { world, cfg } = await mounted();
+    const page = await FakePage.open(origin(world));
+    cleanup.push(() => page.close());
+    expect(page.init.basin).toEqual(DESKTOP_PET_DEFAULTS.basin);
+    cfg.basin = { enabled: false, sound: true };
+    const pushed = await page.next((m) => m.t === 'prefs' && (m.basin as { enabled?: boolean })?.enabled === false);
+    expect(pushed.basin).toEqual({ enabled: false, sound: true });
+  });
+
+  it('describes the basin to the model only while the stage has one', async () => {
+    const { world, cfg } = await mounted();
+    expect(world.envPromptVars()['pet.basin']).toContain('铁盆');
+    cfg.basin.enabled = false;
+    expect(world.envPromptVars()['pet.basin']).toBe('');
+  });
+
+  it('reports where the basin came to rest, one report at a time, and stops once it is off the stage', async () => {
+    const { world, host, cfg } = await mounted();
+    const page = await FakePage.open(origin(world));
+    cleanup.push(() => page.close());
+    page.send({ t: 'prop', x: 0.42 });
+    await expect.poll(() => host.events.length, { timeout: 6000 }).toBe(1);
+    expect(host.events[0].text).toBe('[环境] 铁盆停在横向 42% 处。');
+    expect(host.pushOpts[0]).toEqual({ trigger: 'piggyback' });
+    // the bot has not been told the first one yet: a newer resting spot waits, it does not queue up beside it
+    page.send({ t: 'prop', x: 0.8 });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(host.events).toHaveLength(1);
+    world.onEventsSettled([host.events[0]], 'delivered');
+    await expect.poll(() => host.events.length, { timeout: 6000 }).toBe(2);
+    expect(host.events[1].text).toBe('[环境] 铁盆停在横向 80% 处。');
+    cfg.basin.enabled = false;
+    page.send({ t: 'prop', x: 0.9 });
+    await new Promise((r) => setTimeout(r, 2800));
+    expect(host.events).toHaveLength(2);
+  });
+
+  it('tells the bot the basin was thrown onto it, as an interaction that rides the next batch', async () => {
+    const { world, host, cfg } = await mounted();
+    const page = await FakePage.open(origin(world));
+    cleanup.push(() => page.close());
+    page.send({ t: 'propHit' });
+    await expect.poll(() => host.events.length, { timeout: 6000 }).toBe(1);
+    expect(host.events[0]).toMatchObject({ type: 'desktop-pet.touch', text: '[互动] 伙伴把铁盆砸到了你身上,你被砸晕了一会儿。' });
+    expect(host.pushOpts[0]).toEqual({ trigger: 'piggyback' });
+    cfg.basin.enabled = false;
+    page.send({ t: 'propHit' });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(host.events).toHaveLength(1);
+  });
+
   it('pet_say sends parsed beats and reports dropped markers', async () => {
     const { world } = await mounted();
     const page = await FakePage.open(origin(world));
@@ -131,6 +183,11 @@ describe('with a pet page', () => {
     const w2 = await page.next((m) => m.t === 'walk');
     page.send({ t: 'interrupted', walkId: w2.id, x: .4, by: 'drag' });
     expect(await interrupted).toEqual({ text: '没走到:走到 40% 处时被伙伴拎起来了。' });
+
+    const struck = tool(world, 'pet_walk_to').handler({ to: .1 }, ctx);
+    const w3 = await page.next((m) => m.t === 'walk');
+    page.send({ t: 'interrupted', walkId: w3.id, x: .55, by: 'basin' });
+    expect(await struck).toEqual({ text: '没走到:走到 55% 处时被铁盆砸中了,你晕了一会儿。' });
   });
 
   it('pet_walk_to rejects a target it cannot read', async () => {
