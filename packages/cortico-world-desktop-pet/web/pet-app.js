@@ -13,6 +13,8 @@ import { applyTheme, clamp, f, ICONS } from './ui.js';
 import { createSfx } from './sound.js';
 import { COO_CSS, mini, normalizeSkin, skinCss } from './coo/coo.js';
 import { loadBody } from './body-host.js';
+import { createBasin } from './props/basin.js';
+import { createInteraction } from './props/interaction.js';
 
 const $ = (s) => document.querySelector(s);
 const host = window.petHost || null;
@@ -37,6 +39,8 @@ const prefs = {
   doubleClickChat: false,
   /** Draw at the moving frame rate while the body rests too. */
   lockFrameRate: false,
+  /** The stage's iron basin and its own sounds; the World's config decides, and it arrives with `init`. */
+  basin: { enabled: false, sound: true },
 };
 const sfx = createSfx();
 if (host) sfx.unlock();
@@ -44,6 +48,45 @@ else ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, ()
 
 const floorGap = () => (host ? 2 : 48);
 const bounds = () => ({ W: innerWidth, H: innerHeight, floorY: innerHeight - floorGap(), S: .42 * prefs.scale });
+/**
+ * Props that share the stage and its one gravity engine with the body (web/props/basin.js): trusted
+ * page code, drawn straight on the stage, so unlike a figure pack they may stand anywhere on the
+ * floor and take the pointer wherever they are. `heldProp` is the one under a press that has not been
+ * let go of; the window keeps the mouse meanwhile, as for the body.
+ */
+const props = [createBasin({ layer: $('#propLayer'), bounds, sfx, src: '/web/props/basin.png' })];
+// the basin is away until `init` says the config has it: showing it first would flash one the person turned off
+for (const pr of props) pr.setVisible(prefs.basin.enabled);
+let heldProp = null;
+const propAt = (p) => props.find((pr) => pr.hit(p)) ?? null;
+const propCursor = () => props.map((pr) => pr.cursor).find(Boolean) ?? '';
+/**
+ * The body↔prop contact (props/interaction.js): the page is the one place that sees both the body's
+ * reported layout and the basin's state, so it lets them touch — a walk kicks the basin, a thrown
+ * basin strikes the body. It acts through these callbacks and moves nothing itself.
+ */
+const interact = createInteraction();
+/**
+ * What is about to knock the body out of what it was doing, set just before the dizzy and read back by
+ * the walk that stops because of it (`do` reports the interruption while it is still on the stack). Empty
+ * otherwise, so a dizzy the body asked for itself still reads as that.
+ */
+let dizzyBy = '';
+const io = {
+  kick: (vx, vy, spin) => props[0]?.impulse(vx, vy, spin),
+  hitBounce: (dir) => props[0]?.hitBounce(dir),
+  walkTo: (x) => body?.walk(clamp(x, 40, innerWidth - 40), false, 0),
+  react: () => {
+    // the frame's `do` is fire-and-forget, so ask what the body itself asks: one in the air, held up or
+    // crouching cannot take the dizzy, and saying so would be a lie about a performance that never came
+    const l = at();
+    if (!l || l.mode === 'drag' || l.mode === 'air' || l.mode === 'crouch') return;
+    dizzyBy = 'basin';
+    body?.do('dizzy');
+    dizzyBy = '';
+    send({ t: 'propHit' });
+  },
+};
 /**
  * The body on screen (body-host.js), null until the first one is ready, and the words it does (its pack's
  * vocab, by id). `T` is the page's clock, in seconds of frames drawn.
@@ -56,6 +99,7 @@ const bodyState = { listening: false, thinking: false, dialogOpen: false };
 const holdRoam = (seconds) => body?.set({ hold: seconds });
 addEventListener('resize', () => {
   body?.set({ bounds: bounds() });
+  for (const pr of props) pr.setBounds(bounds());
   // the World reads walk targets and drop spots against the stage the pet is on now
   send({ t: 'hello', screen: { w: innerWidth, h: innerHeight } });
 });
@@ -166,13 +210,33 @@ function reportPosition() {
   send({ t: 'position', x });
 }
 
+/**
+ * Where the basin lies once it stops moving: the bot is told this so it can walk to it and kick it, and
+ * one report per stop is enough — the basin only moves when someone kicks or throws it.
+ */
+let sentPropX = null;
+function reportProp() {
+  const st = props[0]?.state() ?? null;
+  if (!st) { sentPropX = null; return; }
+  if (!st.resting) { sentPropX = null; return; }
+  const x = st.x / innerWidth;
+  if (sentPropX !== null && Math.abs(x - sentPropX) * innerWidth < 1) return;
+  sentPropX = x;
+  send({ t: 'prop', x });
+}
+
 function applyPrefs(p) {
   if (p.skin) { skin = normalizeSkin(p.skin); skinStyle.textContent = skinCss(skin); void applyFigure(skin); }
   if (p.roam) { prefs.roam = p.roam; body?.set({ roam: p.roam }); }
   if (typeof p.sound === 'boolean') { prefs.sound = p.sound; sfx.set(p.sound); }
   if (p.sounds && typeof p.sounds === 'object') sfx.configure({ kinds: p.sounds, snoreSeconds: p.sounds.snoreSeconds });
+  if (p.basin && typeof p.basin === 'object') {
+    prefs.basin = { enabled: p.basin.enabled !== false, sound: p.basin.sound !== false };
+    for (const pr of props) { pr.setVisible(prefs.basin.enabled); pr.setSound(prefs.basin.sound); }
+    if (!prefs.basin.enabled) heldProp = null;
+  }
   if (p.theme === 'dark' || p.theme === 'light') { prefs.theme = p.theme; applyTheme(p.theme); body?.set({ theme: p.theme }); }
-  if (typeof p.scale === 'number') { prefs.scale = p.scale; body?.set({ bounds: bounds() }); }
+  if (typeof p.scale === 'number') { prefs.scale = p.scale; body?.set({ bounds: bounds() }); for (const pr of props) pr.setBounds(bounds()); }
   if (typeof p.rememberPosition === 'boolean') { prefs.rememberPosition = p.rememberPosition; reportPosition(); }
   if (typeof p.user === 'string') prefs.user = p.user;
   if (typeof p.micDevice === 'string' && p.micDevice !== prefs.micDevice) { prefs.micDevice = p.micDevice; stopMic(); }
@@ -221,7 +285,7 @@ function onBody(kind, d) {
   if (kind === 'arrived' || kind === 'interrupted') {
     if (!d.walkId || !walkTargets.has(d.walkId)) return;
     walkTargets.delete(d.walkId);
-    send({ t: kind, walkId: d.walkId, x: (typeof d.x === 'number' ? d.x : at()?.x ?? 0) / innerWidth, by: d.by });
+    send({ t: kind, walkId: d.walkId, x: (typeof d.x === 'number' ? d.x : at()?.x ?? 0) / innerWidth, by: dizzyBy || d.by });
   } else if (kind === 'touch') {
     send({ t: 'touch', ...d });
     if (d.kind === 'grab') closeMenu();
@@ -1071,8 +1135,13 @@ document.addEventListener('pointermove', (e) => {
   const p = { x: e.clientX, y: e.clientY };
   cursor.at = p;
   // while the window moves to another display, moves may come in either display's coordinates; the drag shifts over once it has moved
-  if (!shifting) body?.pointer('move', { ...p, t: e.timeStamp });
-  const hit = !!body?.hit(p), ui = !!overUi(e);
+  let over = heldProp;
+  if (!shifting) {
+    body?.pointer('move', { ...p, t: e.timeStamp });
+    over = heldProp ?? propAt(p);
+    for (const pr of props) { if (pr === over) pr.pointer('move', { ...p, t: e.timeStamp }); else pr.pointer('leave'); }
+  }
+  const hit = !!body?.hit(p) || !!over, ui = !!overUi(e);
   diag.move = { at: performance.now(), type: e.pointerType, x: Math.round(p.x), y: Math.round(p.y), hit, ui };
   diag.types.add(e.pointerType);
   if (e.pointerType !== diag.type) {
@@ -1096,7 +1165,7 @@ host?.onCursor?.((p) => {
     return;
   }
   const el = document.elementFromPoint(p.x, p.y);
-  const hit = !!body?.hit(p), ui = !!el?.closest?.(UI_SELECTOR);
+  const hit = !!body?.hit(p) || !!propAt(p), ui = !!el?.closest?.(UI_SELECTOR);
   diag.poll = { at: performance.now(), x: p.x, y: p.y, hit, ui };
   setInteractive(pressing || hit || ui, 'poll');
 });
@@ -1106,10 +1175,22 @@ stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   closeMenu();
   const p = { x: e.clientX, y: e.clientY, t: e.timeStamp };
+  const onPet = !!body?.hit(p);
+  // the body wins where it stands; a prop takes the pointer anywhere else on it
+  if (!onPet) {
+    const pr = propAt(p);
+    if (pr && pr.pointer('down', p)) { heldProp = pr; pressing = true; stage.setPointerCapture(e.pointerId); e.preventDefault(); return; }
+  }
   body?.pointer('down', p);
-  if (body?.hit(p)) { pressing = true; stage.setPointerCapture(e.pointerId); e.preventDefault(); }
+  if (onPet) { pressing = true; stage.setPointerCapture(e.pointerId); e.preventDefault(); }
 });
-const up = (e) => { pressing = false; body?.pointer('up', { x: e?.clientX ?? lastPointer.x, y: e?.clientY ?? lastPointer.y, t: e?.timeStamp ?? performance.now() }); stage.style.cursor = ''; };
+const up = (e) => {
+  pressing = false;
+  const p = { x: e?.clientX ?? lastPointer.x, y: e?.clientY ?? lastPointer.y, t: e?.timeStamp ?? performance.now() };
+  if (heldProp) { heldProp.pointer('up', p); heldProp = null; }
+  body?.pointer('up', p);
+  stage.style.cursor = '';
+};
 /**
  * Most milliseconds a drop on another display waits for the page to take the window's new size
  * (within a pixel: fractional scales round it). The size normally arrives a frame or two after
@@ -1124,6 +1205,7 @@ async function settleSize(to) {
     await new Promise((r) => requestAnimationFrame(r));
   }
   body?.set({ bounds: bounds() });
+  for (const pr of props) pr.setBounds(bounds());
 }
 const outside = (p) => p.x < 0 || p.y < 0 || p.x >= innerWidth || p.y >= innerHeight;
 /** A move of the window onto the display under the cursor, while one is under way. */
@@ -1132,23 +1214,26 @@ let following = null;
 let shifting = false;
 /**
  * A drag carried past the window's edge: over another display the window moves there at once, so
- * the held pet stays in sight instead of being cut off at the edge until it is let go of.
+ * the held pet stays in sight instead of being cut off at the edge until it is let go of. What is
+ * held is either the body or a prop that has been pulled off the floor, and whichever it is goes
+ * under the cursor on the new display.
  */
+const carrying = () => at()?.mode === 'drag' || !!heldProp?.state()?.dragging;
 function followDrag(p) {
-  if (following || at()?.mode !== 'drag' || !host?.followCursor || !outside(p)) return;
+  if (following || !carrying() || !host?.followCursor || !outside(p)) return;
   shifting = true;
   following = (async () => {
     const to = await host.followCursor().catch(() => null);
     shifting = false;
     if (!to) return;
-    body?.shift(to.dx, to.dy);
+    (heldProp ?? body)?.shift(to.dx, to.dy);
     await settleSize(to);
   })().finally(() => { following = null; shifting = false; });
 }
 stage.addEventListener('pointerup', async (e) => {
   // the window was moving under the cursor: the release point is in the coordinates it left behind
   if (following) { await following; up(); return; }
-  if (!outside({ x: e.clientX, y: e.clientY }) || at()?.mode !== 'drag' || !host?.followCursor) { up(e); return; }
+  if (!outside({ x: e.clientX, y: e.clientY }) || !carrying() || !host?.followCursor) { up(e); return; }
   // let go of past the window's edge in one move: over another display the window follows and the pet drops there
   const to = await host.followCursor().catch(() => null);
   if (!to) { up(e); return; }
@@ -1158,13 +1243,17 @@ stage.addEventListener('pointerup', async (e) => {
   document.body.style.visibility = 'hidden';
   try {
     await settleSize(to);
-    body?.drop({ x: to.x, y: to.y });
+    if (heldProp) {
+      // a prop has no drop of its own: it goes back under the cursor and takes the release there
+      heldProp.pointer('move', { x: to.x, y: to.y });
+      up({ clientX: to.x, clientY: to.y });
+    } else body?.drop({ x: to.x, y: to.y });
   } finally {
     document.body.style.visibility = '';
   }
 });
 stage.addEventListener('pointercancel', up);
-document.addEventListener('pointerleave', () => { cursor.at = null; body?.pointer('leave', {}); });
+document.addEventListener('pointerleave', () => { cursor.at = null; body?.pointer('leave', {}); for (const pr of props) pr.pointer('leave'); });
 stage.addEventListener('dblclick', (e) => { if (prefs.doubleClickChat && body?.hit({ x: e.clientX, y: e.clientY })) openInput(); });
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
@@ -1227,7 +1316,7 @@ function placeTools(l) {
 function layout() {
   const l = at();
   if (!l) return;
-  stage.style.cursor = l.cursor;
+  stage.style.cursor = l.cursor || propCursor();
   if (!tools.hidden) placeTools(l);
   const a = l.bubble;
   let sayBox = null;
@@ -1314,9 +1403,9 @@ function stepBackdrop(dt) {
 
 /* ---------- loop ---------- */
 /**
- * Frames per second: MOVING_FPS while the body moves (its layout's `moving`) and always while `lockFrameRate` is on,
- * RESTING_FPS otherwise. Each frame redraws the whole figure, so the window's CPU and GPU time grows with
- * this rate; frames do not follow the display's refresh rate.
+ * Frames per second: MOVING_FPS while the body moves (its layout's `moving`) or a prop is off the floor,
+ * and always while `lockFrameRate` is on; RESTING_FPS otherwise. Each frame redraws the whole figure, so
+ * the window's CPU and GPU time grows with this rate; frames do not follow the display's refresh rate.
  */
 const MOVING_FPS = 60, RESTING_FPS = 30;
 /** When the next frame is due (a rAF timestamp), and the gap between frames at the current rate. */
@@ -1336,6 +1425,9 @@ function frame(now) {
     stepListen();
     setBody({ dialogOpen: !!item || !!listen.phase });
     body?.tick(dt);
+    for (const pr of props) pr.tick(dt);
+    interact.step(dt, at(), props[0]?.state(), io, { roam: prefs.roam });
+    reportProp();
     stepBackdrop(dt);
     stepTools();
     layout();
@@ -1345,7 +1437,8 @@ function frame(now) {
     const msg = err?.message ?? String(err);
     if (msg !== frameErr) { frameErr = msg; console.error(err); }
   }
-  const full = prefs.lockFrameRate || !!at()?.moving;
+  const full = prefs.lockFrameRate || !!at()?.moving
+    || props.some((pr) => { const st = pr.state(); return !!st && (st.air || st.dragging); });
   gap = 1000 / (full ? MOVING_FPS : RESTING_FPS);
   // a frame more than a gap late starts the count again instead of drawing the missed ones back to back
   dueAt = now - dueAt > gap ? now + gap : dueAt + gap;

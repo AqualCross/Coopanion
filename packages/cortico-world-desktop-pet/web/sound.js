@@ -6,7 +6,7 @@
  */
 /** Which kind each sound belongs to; a kind can be silenced on its own (`sfx.configure`). */
 export const SOUND_KINDS = {
-  move: ['step', 'skid', 'jump', 'land', 'whoosh', 'chirps', 'shake', 'nod', 'spin', 'shiver', 'dance', 'look'],
+  move: ['step', 'skid', 'jump', 'land', 'clang', 'whoosh', 'chirps', 'shake', 'nod', 'spin', 'shiver', 'dance', 'look'],
   touch: ['grab', 'squeak', 'purr', 'poke'],
   face: ['happy', 'wink', 'love', 'surprised', 'angry', 'sad', 'shy', 'yawn'],
   snore: ['snore'],
@@ -99,6 +99,13 @@ export function createSfx({ storageKey = 'cortico-pet.sound.v1', volume = .55 } 
       tone({ f0: hard ? 160 : 190, f1: 48, dur: hard ? .28 : .16, vol: hard ? .4 : .25 });
       noise({ type: 'lowpass', f0: hard ? 700 : 500, f1: 120, dur: .12, vol: hard ? .25 : .12 });
       if (hard) tone({ type: 'square', f0: 420, f1: 300, dur: .08, vol: .06, at: .02, filter: 1600 });
+    },
+    // a struck metal basin: inharmonic partials ringing down over a short noise burst
+    clang(hard) {
+      const k = hard ? 1 : .55;
+      noise({ type: 'bandpass', f0: 2600, f1: 1700, q: 2, dur: .09, vol: .16 * k });
+      [1244, 1867, 2489, 3120].forEach((fr, i) => tone({ type: 'square', f0: fr, f1: fr * .985, dur: .46 - i * .08, vol: (.09 - i * .018) * k, filter: 5200 }));
+      tone({ f0: 320, f1: 140, dur: .12, vol: .18 * k });
     },
     grab() { tone({ type: 'triangle', f0: 680, f1: 1500, dur: .14, vol: .18, vib: 60, vibRate: 30 }); },
     squeak() { tone({ type: 'triangle', f0: R(900, 1200), f1: R(1300, 1700), dur: .09, vol: .08, vib: 40, vibRate: 35 }); },
