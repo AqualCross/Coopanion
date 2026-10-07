@@ -1,7 +1,7 @@
 /**
  * The stage's one gravity / rigid-body engine. Everything that flies free on the pet stage runs on
  * these same functions and constants: the figure body's throws and drops (web/kit/body.js) and the
- * props beside it, like the kickable basin (web/props/basin.js). They are pure functions over a
+ * props beside it, like the kickable toy (web/props/toy.js). They are pure functions over a
  * plain { x, y, vx, vy } state in stage pixels, so each caller keeps its own state and they all fall,
  * bounce and land alike.
  */
@@ -30,7 +30,7 @@ export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
  *                          harder than `o.settleSpeed`); `bounce` is the downward speed it arrived with
  *   { land, side, ceil }   came to rest on the floor; `land` is the downward speed it arrived with
  * The caller decides what a bounce or a landing looks and sounds like; the engine only moves. The body
- * asks for no floor bounce (it lands and stays), a loose prop asks for one (a basin rings on down).
+ * asks for no floor bounce (it lands and stays), a loose prop asks for one (it rings on down).
  */
 export function stepAir(s, dt, bounds, o = {}) {
   const gravity = o.gravity ?? GRAVITY, drag = o.drag ?? AIR_DRAG;

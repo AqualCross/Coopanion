@@ -31,8 +31,8 @@ const KEYS = {
   hover: `${K}.hoverButtons`,
   dblclick: `${K}.doubleClickChat`,
   selfAdjust: `${K}.selfAdjust`,
-  basin: `${K}.basin.enabled`,
-  basinSound: `${K}.basin.sound`,
+  toy: `${K}.toy.enabled`,
+  toySound: `${K}.toy.sound`,
 } as const;
 
 /** The pet menu's actions in its order (the World's PET_ACTIONS), with the icon each shows. */
@@ -85,9 +85,9 @@ const S = pick({
     dblclick: '双击 Coo 打开打字框',
     selfAdjust: '允许 Coo 自己调整',
     selfAdjustHint: 'Coo 可以自己换形象和装扮、改走动多少;改音效、大小、黑白模式、悬停按钮和对你的称呼前会先问你。关掉后这些它都改不了。',
-    basin: '铁盆',
-    basinHint: '地面上放一只铁盆:Coo 路过顺脚踢飞,隔一会儿自己走过去踢,拎起来能甩。砸到 Coo 身上它会被砸晕一会儿。关掉后盆收走。',
-    basinSound: '铁盆的响声',
+    toy: '玩具',
+    toyHint: '地面上放一件玩具:Coo 路过顺脚踢飞,隔一会儿自己走过去踢,拎起来能甩。砸到 Coo 身上它会被砸晕一会儿。样子和名字在「装扮」页下面换,默认是一只铁盆。关掉后它从舞台上收走。',
+    toySound: '玩具的响声',
     actions: { chat: '打字', voice: '语音输入', roam: '行为模式', theme: '夜间模式', sound: '音效', dress: '装扮', hide: '隐藏桌宠' } as Record<string, string>,
     saved: '已保存',
     saveFailed: (why: string) => `没保存上:${why}`,
@@ -135,9 +135,9 @@ const S = pick({
     dblclick: 'Double-click Coo to open the typing box',
     selfAdjust: 'Let Coo adjust itself',
     selfAdjustHint: 'Coo may change its own figure, dress and how much it walks; it asks you before changing sounds, size, night or day look, hover buttons or what it calls you. When off, it can change none of these.',
-    basin: 'Iron basin',
-    basinHint: 'A steel basin on the floor: Coo kicks it while walking past, goes to kick it now and then, and you can pick it up and fling it. A hit knocks Coo dizzy for a while. Off takes the basin away.',
-    basinSound: 'Basin sounds',
+    toy: 'Toy',
+    toyHint: 'A toy on the floor: Coo kicks it while walking past, goes to kick it now and then, and you can pick it up and fling it. A hit knocks Coo dizzy for a while. Its picture and name are on the Dress up page; the built-in one is an iron basin. Off takes it away.',
+    toySound: 'Toy sounds',
     actions: { chat: 'Type', voice: 'Voice input', roam: 'Walking', theme: 'Night mode', sound: 'Sounds', dress: 'Dress up', hide: 'Hide pet' } as Record<string, string>,
     saved: 'Saved',
     saveFailed: (why: string) => `Not saved: ${why}`,
@@ -181,10 +181,10 @@ async function mount(ctx: FeatureContext): Promise<void> {
   const remember = ui.checkbox(S.remember, { onChange: (on) => void save(KEYS.remember, on) });
   const dblclick = ui.checkbox(S.dblclick, { onChange: (on) => void save(KEYS.dblclick, on) });
   const selfAdjust = ui.checkbox(S.selfAdjust, { onChange: (on) => void save(KEYS.selfAdjust, on) });
-  const basin = ui.checkbox(S.basin, { onChange: (on) => { void save(KEYS.basin, on); renderBasinSound(); } });
-  const basinSound = ui.checkbox(S.basinSound, { onChange: (on) => void save(KEYS.basinSound, on) });
-  // a basin that is not on the stage has no sound of its own to switch
-  const renderBasinSound = () => { basinSound.input.disabled = !basin.checked; };
+  const toy = ui.checkbox(S.toy, { onChange: (on) => { void save(KEYS.toy, on); renderToySound(); } });
+  const toySound = ui.checkbox(S.toySound, { onChange: (on) => void save(KEYS.toySound, on) });
+  // a toy that is not on the stage has no sound of its own to switch
+  const renderToySound = () => { toySound.input.disabled = !toy.checked; };
   const stats = ui.checkbox(S.stats, { onChange: (on) => void save(STATS_KEY, on, STATS_GROUP) });
   const statsDoc = ui.h('a', 'home-link', S.statsDoc);
   statsDoc.href = STATS_DOC;
@@ -244,8 +244,8 @@ async function mount(ctx: FeatureContext): Promise<void> {
     row('', remember.el, S.rememberHint),
     row(S.hover, hoverBox, S.hoverHint(MAX_HOVER)),
     row('', dblclick.el),
-    row('', basin.el, S.basinHint),
-    row('', basinSound.el),
+    row('', toy.el, S.toyHint),
+    row('', toySound.el),
     row('', selfAdjust.el, S.selfAdjustHint),
     row('', statsBox, S.statsHint),
     msg,
@@ -350,9 +350,9 @@ async function mount(ctx: FeatureContext): Promise<void> {
     if (typeof values[KEYS.remember] === 'boolean') remember.setChecked(values[KEYS.remember] as boolean);
     if (typeof values[KEYS.dblclick] === 'boolean') dblclick.setChecked(values[KEYS.dblclick] as boolean);
     if (typeof values[KEYS.selfAdjust] === 'boolean') selfAdjust.setChecked(values[KEYS.selfAdjust] as boolean);
-    if (typeof values[KEYS.basin] === 'boolean') basin.setChecked(values[KEYS.basin] as boolean);
-    if (typeof values[KEYS.basinSound] === 'boolean') basinSound.setChecked(values[KEYS.basinSound] as boolean);
-    renderBasinSound();
+    if (typeof values[KEYS.toy] === 'boolean') toy.setChecked(values[KEYS.toy] as boolean);
+    if (typeof values[KEYS.toySound] === 'boolean') toySound.setChecked(values[KEYS.toySound] as boolean);
+    renderToySound();
     if (typeof values[KEYS.hover] === 'string') {
       picked = (values[KEYS.hover] as string).split(',').map((x) => x.trim()).filter((x) => ACTIONS.some(([a]) => a === x));
       renderHover();

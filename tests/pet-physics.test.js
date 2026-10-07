@@ -5,7 +5,7 @@ import {
 } from '../packages/cortico-world-desktop-pet/web/kit/physics.js';
 
 // The stage's one gravity engine: the figure body's throws (kit/body.js) and the props beside it
-// (props/basin.js) both fall on these numbers. A change here moves everything on the stage, so it is
+// (props/toy.js) both fall on these numbers. A change here moves everything on the stage, so it is
 // pinned against the values the kit has always used.
 const BOUNDS = { minX: 100, maxX: 900, ceilY: 60, floorY: 380 };
 

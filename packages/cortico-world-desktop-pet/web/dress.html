@@ -9,10 +9,24 @@
 </head>
 <body class="dress-page">
 <main>
-  <div class="preview" id="preview" aria-label="预览">
-    <div class="figure-layer" id="figureLayer"></div>
-    <button class="tool mode" id="mode" type="button"></button>
-    <p class="saved" id="saved" aria-live="polite"></p>
+  <div class="side">
+    <div class="preview" id="preview" aria-label="预览">
+      <div class="figure-layer" id="figureLayer"></div>
+      <button class="tool mode" id="mode" type="button"></button>
+      <p class="saved" id="saved" aria-live="polite"></p>
+    </div>
+    <div class="toy" id="toyBox">
+      <div class="row-label">玩具</div>
+      <div class="toy-row">
+        <button class="toy-pic" id="toyPic" type="button" title="换一张图"></button>
+        <div class="toy-fields">
+          <label class="toy-name"><span>名字</span><input id="toyName" type="text" maxlength="12" autocomplete="off" spellcheck="false"></label>
+          <button class="toy-reset" id="toyReset" type="button" hidden>用回铁盆</button>
+        </div>
+      </div>
+      <p class="toy-hint">挑一张图当它,再给它起个名字;它在屏幕上照样能被踢、被拎起来甩。</p>
+      <input id="toyFile" type="file" accept="image/*" hidden>
+    </div>
   </div>
   <div class="dress" id="dress">
     <div class="row-label" id="lbFigure">形象</div><div class="slot" id="optFigure" role="group" aria-labelledby="lbFigure"></div>

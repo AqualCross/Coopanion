@@ -1,8 +1,10 @@
 /**
  * Dressing page: the body (a figure pack, src/packs.ts; Coo is one); for Coo the palette, four accessory slots
  * and their color channels, for another pack a row per dress-up axis of its manifest; with a live preview
- * of the body run as on the desktop (body-host.js).
- * Every change is saved through `POST /api/skin` (the dark/light switch through `POST /api/prefs`);
+ * of the body run as on the desktop (body-host.js). Below the preview, the stage's toy: the picture it is
+ * drawn from and the name the pet is told it has.
+ * Every change is saved through `POST /api/skin` (the dark/light switch and the toy's name through
+ * `POST /api/prefs`, the toy's picture through `POST /api/toy`);
  * the World persists it and pushes it to the pet window. Changes made elsewhere arrive over
  * `/socket?role=dress`.
  */
@@ -54,6 +56,55 @@ function save(path, body) {
     .then((r) => { $('#saved').textContent = r.ok ? '已保存' : '没保存上'; })
     .catch(() => { $('#saved').textContent = '没保存上:连不上桌宠服务'; });
 }
+
+/* ---------- the toy on the stage ---------- */
+
+/** The long side of the picture kept: the stage draws a toy about the body's head, so more is wasted bytes. */
+const TOY_PX = 384;
+/** What the World says about the toy: its name, and when its picture was last replaced (0 is the built-in basin). */
+let toy = { name: '铁盆', rev: 0 };
+const toyPic = $('#toyPic'), toyName = $('#toyName'), toyReset = $('#toyReset'), toyFile = $('#toyFile');
+
+function renderToy() {
+  toyPic.style.backgroundImage = `url("/api/toy?v=${toy.rev}")`;
+  if (document.activeElement !== toyName) toyName.value = toy.name;
+  toyReset.hidden = !toy.rev;
+}
+/** The picked picture redrawn no bigger than the stage needs, as a PNG data URL (transparency kept). */
+async function shrink(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, TOY_PX / Math.max(bmp.width, bmp.height));
+  const w = Math.max(1, Math.round(bmp.width * k)), h = Math.max(1, Math.round(bmp.height * k));
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  cv.getContext('2d').drawImage(bmp, 0, 0, w, h);
+  bmp.close?.();
+  return cv.toDataURL('image/png');
+}
+async function pickToy(file) {
+  try {
+    return await fetch('/api/toy', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: await shrink(file) }) });
+  } catch { return null; }
+}
+toyPic.addEventListener('click', () => toyFile.click());
+toyFile.addEventListener('change', () => {
+  const f = toyFile.files?.[0];
+  toyFile.value = '';
+  if (!f) return;
+  void pickToy(f).then((r) => { $('#saved').textContent = r?.ok ? '已保存' : '没保存上:这张图用不了'; });
+});
+toyReset.addEventListener('click', () => {
+  fetch('/api/toy', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reset: true }) })
+    .then((r) => { $('#saved').textContent = r.ok ? '已保存' : '没保存上'; })
+    .catch(() => { $('#saved').textContent = '没保存上:连不上桌宠服务'; });
+});
+// the name is what the pet is told, so an empty one is not kept: the box goes back to what it was
+toyName.addEventListener('change', () => {
+  const name = toyName.value.trim();
+  if (!name || name === toy.name) return renderToy();
+  save('/api/prefs', { toy: { name } });
+});
+renderToy();
 
 // the installed figure packs, asked for again whenever the page hears of a look
 let packs = [];
@@ -254,6 +305,10 @@ function connect() {
     const m = JSON.parse(e.data);
     if ((m.t === 'init' || m.t === 'prefs') && (m.theme === 'dark' || m.theme === 'light') && m.theme !== theme) { theme = m.theme; applyTheme(theme, modeBtn); body?.set({ theme }); }
     if (m.t === 'init') loadPacks();
+    if ((m.t === 'init' || m.t === 'prefs') && m.toy) {
+      toy = { name: typeof m.toy.name === 'string' ? m.toy.name : toy.name, rev: typeof m.toy.rev === 'number' ? m.toy.rev : 0 };
+      renderToy();
+    }
     if ((m.t === 'init' || m.t === 'prefs') && m.skin && JSON.stringify(normalizeSkin(m.skin)) !== JSON.stringify(skin)) apply(normalizeSkin(m.skin), false);
   };
   ws.onclose = () => setTimeout(connect, 2000);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,30 +65,23 @@ describe('tools without a page', () => {
 });
 
 describe('with a pet page', () => {
-  it('carries the basin switches to the page, and a console change reaches it', async () => {
+  it('carries the toy switches to the page, and a console change reaches it', async () => {
     const { world, cfg } = await mounted();
     const page = await FakePage.open(origin(world));
     cleanup.push(() => page.close());
-    expect(page.init.basin).toEqual(DESKTOP_PET_DEFAULTS.basin);
-    cfg.basin = { enabled: false, sound: true };
-    const pushed = await page.next((m) => m.t === 'prefs' && (m.basin as { enabled?: boolean })?.enabled === false);
-    expect(pushed.basin).toEqual({ enabled: false, sound: true });
+    expect(page.init.toy).toEqual({ ...DESKTOP_PET_DEFAULTS.toy, rev: 0 });
+    cfg.toy = { enabled: false, sound: true, name: '铁盆' };
+    const pushed = await page.next((m) => m.t === 'prefs' && (m.toy as { enabled?: boolean })?.enabled === false);
+    expect(pushed.toy).toEqual({ enabled: false, sound: true, name: '铁盆', rev: 0 });
   });
 
-  it('describes the basin to the model only while the stage has one', async () => {
-    const { world, cfg } = await mounted();
-    expect(world.envPromptVars()['pet.basin']).toContain('铁盆');
-    cfg.basin.enabled = false;
-    expect(world.envPromptVars()['pet.basin']).toBe('');
-  });
-
-  it('reports where the basin came to rest, one report at a time, and stops once it is off the stage', async () => {
+  it('reports where the toy came to rest, one report at a time, and stops once it is off the stage', async () => {
     const { world, host, cfg } = await mounted();
     const page = await FakePage.open(origin(world));
     cleanup.push(() => page.close());
     page.send({ t: 'prop', x: 0.42 });
     await expect.poll(() => host.events.length, { timeout: 6000 }).toBe(1);
-    expect(host.events[0].text).toBe('[环境] 铁盆停在横向 42% 处。');
+    expect(host.events[0].text).toBe('[环境] 铁盆停在横向 42% 处:走到那儿或再往那边一点,经过时会顺脚把它踢飞。');
     expect(host.pushOpts[0]).toEqual({ trigger: 'piggyback' });
     // the bot has not been told the first one yet: a newer resting spot waits, it does not queue up beside it
     page.send({ t: 'prop', x: 0.8 });
@@ -96,25 +89,58 @@ describe('with a pet page', () => {
     expect(host.events).toHaveLength(1);
     world.onEventsSettled([host.events[0]], 'delivered');
     await expect.poll(() => host.events.length, { timeout: 6000 }).toBe(2);
-    expect(host.events[1].text).toBe('[环境] 铁盆停在横向 80% 处。');
-    cfg.basin.enabled = false;
+    expect(host.events[1].text).toContain('铁盆停在横向 80% 处');
+    cfg.toy.enabled = false;
     page.send({ t: 'prop', x: 0.9 });
     await new Promise((r) => setTimeout(r, 2800));
     expect(host.events).toHaveLength(2);
   });
 
-  it('tells the bot the basin was thrown onto it, as an interaction that rides the next batch', async () => {
+  it('names the toy as the person named it, in what the bot is told', async () => {
     const { world, host, cfg } = await mounted();
     const page = await FakePage.open(origin(world));
     cleanup.push(() => page.close());
-    page.send({ t: 'propHit' });
+    cfg.toy.name = '铁锅';
+    page.send({ t: 'prop', x: 0.3 });
     await expect.poll(() => host.events.length, { timeout: 6000 }).toBe(1);
-    expect(host.events[0]).toMatchObject({ type: 'desktop-pet.touch', text: '[互动] 伙伴把铁盆砸到了你身上,你被砸晕了一会儿。' });
-    expect(host.pushOpts[0]).toEqual({ trigger: 'piggyback' });
-    cfg.basin.enabled = false;
+    expect(host.events[0].text).toContain('铁锅停在横向 30% 处');
+  });
+
+  it('is not told when the toy comes down on it, since it went and kicked it itself', async () => {
+    const { world, host } = await mounted();
+    const page = await FakePage.open(origin(world));
+    cleanup.push(() => page.close());
     page.send({ t: 'propHit' });
     await new Promise((r) => setTimeout(r, 600));
-    expect(host.events).toHaveLength(1);
+    expect(host.events).toHaveLength(0);
+  });
+
+  it('keeps the toy picture the person chose, and tells the page a new one arrived', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pet-toy-'));
+    const { world } = await mounted(() => {}, { toyFile: join(dir, 'toy.png') });
+    const base = origin(world);
+    const page = await FakePage.open(base);
+    cleanup.push(() => page.close());
+    // nothing saved yet: the built-in picture is what the stage shows
+    expect(page.init.toy).toMatchObject({ rev: 0 });
+    const fallback = await fetch(`${base}/api/toy`, { redirect: 'manual' });
+    expect(fallback.status).toBe(302);
+    expect(fallback.headers.get('location')).toBe('/web/props/basin.png');
+
+    const picture = readFileSync(new URL('../web/props/basin.png', import.meta.url));
+    const saved = await fetch(`${base}/api/toy`, { method: 'POST', body: JSON.stringify({ data: `data:image/png;base64,${picture.toString('base64')}` }) });
+    expect(saved.status).toBe(200);
+    const served = await fetch(`${base}/api/toy`);
+    expect(served.status).toBe(200);
+    expect(Buffer.compare(Buffer.from(await served.arrayBuffer()), picture)).toBe(0);
+    // the rev rides the prefs, so a page swaps the picture without a restart
+    const rev = Math.trunc(statSync(join(dir, 'toy.png')).mtimeMs);
+    const pushed = await page.next((m) => m.t === 'prefs' && (m.toy as { rev?: number })?.rev === rev);
+    expect(pushed.toy).toMatchObject({ rev });
+
+    expect((await fetch(`${base}/api/toy`, { method: 'POST', body: JSON.stringify({ data: 'not a png' }) })).status).toBe(400);
+    expect((await fetch(`${base}/api/toy`, { method: 'POST', body: JSON.stringify({ reset: true }) })).status).toBe(200);
+    expect((await fetch(`${base}/api/toy`, { redirect: 'manual' })).status).toBe(302);
   });
 
   it('pet_say sends parsed beats and reports dropped markers', async () => {
@@ -186,7 +212,7 @@ describe('with a pet page', () => {
 
     const struck = tool(world, 'pet_walk_to').handler({ to: .1 }, ctx);
     const w3 = await page.next((m) => m.t === 'walk');
-    page.send({ t: 'interrupted', walkId: w3.id, x: .55, by: 'basin' });
+    page.send({ t: 'interrupted', walkId: w3.id, x: .55, by: 'toy' });
     expect(await struck).toEqual({ text: '没走到:走到 55% 处时被铁盆砸中了,你晕了一会儿。' });
   });
 
