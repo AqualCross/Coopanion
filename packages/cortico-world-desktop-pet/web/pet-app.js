@@ -7,14 +7,18 @@
  *
  * In the pet window (`window.petHost` from the preload) the page is transparent and the
  * window ignores the mouse except over the figure, a bubble, the menu or the hover buttons.
- * Colors follow the World's `theme` through `data-theme` on the root element.
+ * Colors follow the World's `theme` through `data-theme` on the root element, and text the app
+ * language (i18n.js): the one stamped on the page, then the one the World's prefs carry.
  */
 import { applyTheme, clamp, f, ICONS } from './ui.js';
+import { language, t, useLanguage } from './i18n.js';
 import { createSfx } from './sound.js';
 import { COO_CSS, mini, normalizeSkin, skinCss } from './coo/coo.js';
 import { loadBody } from './body-host.js';
 import { createToy } from './props/toy.js';
 import { createInteraction } from './props/interaction.js';
+import { announcePainted, dressFloor, glowColor, lightWall, modeButton, setGlow } from './stage.js';
+import { bindAppearance } from './appearance.js';
 
 const $ = (s) => document.querySelector(s);
 const host = window.petHost || null;
@@ -29,7 +33,7 @@ cooStyle.textContent = COO_CSS;
 document.head.append(cooStyle, skinStyle);
 
 const prefs = {
-  roam: 'calm', sound: true, theme: document.documentElement.dataset.theme, scale: 1, user: '伙伴', mic: false, micDevice: '', bot: null,
+  roam: 'calm', sound: true, theme: document.documentElement.dataset.theme, scale: 1, glow: 7, user: '', mic: false, micDevice: '', bot: null,
   /** Voice input: switched on, recognizer ready, why not, how to talk, and the mode in force. */
   voice: { enabled: false, ready: false, detail: null, hint: '', mode: 'hold' },
   /** The actions shown as buttons beside the pet on hover. */
@@ -37,16 +41,33 @@ const prefs = {
   rememberPosition: false,
   /** Double-clicking the pet opens the typing box. */
   doubleClickChat: false,
+  statusBubble: true,
   /** Draw at the moving frame rate while the body rests too. */
+  /** Frames a second while the body moves; 0 follows the display. */
+  frameRate: 60,
   lockFrameRate: false,
   /** The stage's toy: whether it is there, whether it rings, and when its picture was last replaced. */
   toy: { enabled: false, sound: true, rev: 0 },
 };
+// in a tab (the settings window's preview) the page is its own stage: a wall that answers the pointer, a floor with icons, a night/day button
+const modeBtn = host ? null : modeButton(document.body, () => prefs.theme, (theme) => applyPrefs({ theme }));
+if (!host) {
+  lightWall(document.body, document.documentElement);
+  dressFloor($('.floor'));
+  // the settings window lends its theme color (--host-accent): the light's color when the body's pack names none
+  bindAppearance(document, window);
+}
+/** The pack on screen, as /api/figures lists it: its colors light the wall in a tab. */
+let shownPack = null;
+const lightFor = (s) => { if (!host) setGlow(document.body, glowColor(shownPack, s)); };
+
 const sfx = createSfx();
 if (host) sfx.unlock();
 else ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => sfx.unlock(), { capture: true }));
 
-const floorGap = () => (host ? 2 : 48);
+/** Page pixels the window reaches below the floor, over a taskbar (the window process says how many); a figure may draw there. */
+let below = 0;
+const floorGap = () => (host ? 2 + below : 48);
 const bounds = () => ({ W: innerWidth, H: innerHeight, floorY: innerHeight - floorGap(), S: .42 * prefs.scale });
 /**
  * Props that share the stage and its one gravity engine with the body (web/props/toy.js): trusted
@@ -96,8 +117,9 @@ let body = null, words = new Map(), T = 0;
 /** Where the body last said it is (body-host.js `layout`), or null. */
 const at = () => body?.layout ?? null;
 /** What the body is told of the page: talking orders hold its roaming off, and these states. */
-const bodyState = { listening: false, thinking: false, dialogOpen: false };
+const bodyState = { listening: false, thinking: false, thoughtShown: true, dialogOpen: false };
 const holdRoam = (seconds) => body?.set({ hold: seconds });
+host?.onFloor?.((px) => { below = px; body?.set({ bounds: bounds() }); });
 addEventListener('resize', () => {
   body?.set({ bounds: bounds() });
   for (const pr of props) pr.setBounds(bounds());
@@ -111,28 +133,54 @@ function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg))
 function connect() {
   ws = new WebSocket(`ws://${location.host}/socket?role=pet&host=${host ? 'window' : 'tab'}`);
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => { backoff = 500; send({ t: 'hello', screen: { w: innerWidth, h: innerHeight }, host: host ? 'window' : 'tab' }); };
+  ws.onopen = () => { backoff = 500; send({ t: 'hello', screen: { w: innerWidth, h: innerHeight }, host: host ? 'window' : 'tab' }); reportVisibility(); };
   ws.onmessage = (e) => { try { onOrder(JSON.parse(e.data)); } catch (err) { console.error(err); } };
   ws.onclose = (e) => {
     ws = null;
     stopMic();
     // the World gave up on these steps when the page went; it asks again once the page is back
     dropDialogs();
+    setStatus(null);
     if (e.code === 4000) return; // replaced by a newer pet page
     setTimeout(connect, backoff);
     backoff = Math.min(8000, backoff * 2);
   };
 }
-connect();
+/** The pet window says whether it is shown: hidden from its menu or the tray, it stays connected. */
+let windowShown = true;
+function reportVisibility() { if (host) send({ t: 'visibility', hidden: !windowShown }); }
+// the page itself always reads as visible (its window does not throttle it): the window process says when it is hidden
+host?.onShown?.((shown) => { windowShown = shown; sfx.setShown(shown); reportVisibility(); });
+
+/* ---------- OBS overlay: while the window streams, each frame drawn is reported with the part it sends, the pet and its bubbles ---------- */
+let overlayOn = false;
+/** The body's box with room for its halo and what floats above its head, joined with the bubbles shown; null with no body. */
+function overlayRect() {
+  const b = at()?.box;
+  if (!b) return null;
+  // the halo reaches about 40% of the body's width out; emotes and z's float up to its height above
+  const side = Math.max(24, .4 * b.w), top = Math.max(48, b.h);
+  const parts = [{ x: b.x - side, y: b.y - top, width: b.w + 2 * side, height: b.h + top + side }];
+  for (const el of [bubble, heardEl, trail]) if (!el.hidden) parts.push(rectOf(el));
+  const x = Math.max(0, Math.min(...parts.map((r) => r.x))), y = Math.max(0, Math.min(...parts.map((r) => r.y)));
+  const right = Math.min(innerWidth, Math.max(...parts.map((r) => r.x + r.width))), bottom = Math.min(innerHeight, Math.max(...parts.map((r) => r.y + r.height)));
+  return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null;
+}
+host?.onOverlay?.((on) => { overlayOn = on; });
+// the text is in before anything is shown
+void useLanguage().then(() => { document.title = t('pet.title'); host?.setLanguage?.(language()); connect(); });
 
 /*
  * ---------- the body: a figure pack (src/packs.ts; Coo is one) run in a sandboxed frame ----------
  * The World hears which body is on screen (`figure`), so the bot is told of a switch, and of a pack that
  * would not load or broke while running (no usable WebGL, a missing texture, a bug in its code): the page
- * then shows Coo instead.
+ * then shows Coo instead. A body just loaded also says which words of its vocabulary it knows (`words`,
+ * null when it does not say).
  */
 let skin = normalizeSkin(null), wanted = null;
-function reportFigure(id, ok, reason, scheme) { send({ t: 'figure', id, ok, ...(scheme ? { scheme } : {}), ...(reason ? { reason } : {}) }); }
+function reportFigure(id, ok, reason, scheme, known) {
+  send({ t: 'figure', id, ok, ...(scheme ? { scheme } : {}), ...(reason ? { reason } : {}), ...(known !== undefined ? { words: known } : {}) });
+}
 function bodyFailed(id, err) {
   console.error(err);
   reportFigure(id, false, String(err?.message ?? err));
@@ -149,7 +197,8 @@ async function showFigure(s) {
   // a pick changed while the same pack is on screen fades in; Coo's picks are its skin
   if (body?.pack === s.figure) {
     body.set({ skin: s });
-    if (s.figure !== 'coo') await body.setScheme(s.scheme, { fade: .45, at: T });
+    if (s.figure !== 'coo') await body.setScheme(s.scheme, { fade: .45 });
+    lightFor(s);
     reportFigure(s.figure, true, null, s.figure === 'coo' ? null : s.scheme);
     return;
   }
@@ -160,7 +209,7 @@ async function showFigure(s) {
 }
 async function swapBody(s) {
   const pack = (await (await fetch('/api/figures')).json()).find((p) => p.id === s.figure);
-  if (!pack) throw new Error('没有装这个形象');
+  if (!pack) throw new Error(t('figure.notInstalled'));
   const was = at();
   const x = was?.x ?? firstX ?? innerWidth * .7;
   const holder = {};
@@ -178,8 +227,10 @@ async function swapBody(s) {
   body?.dispose();
   body = next;
   words = new Map(pack.vocab.map((w) => [w.id, w]));
+  shownPack = pack;
+  lightFor(s);
   sfx.usePack(pack.base, pack.sounds);
-  reportFigure(s.figure, true, null, s.figure === 'coo' ? null : s.scheme);
+  reportFigure(s.figure, true, null, s.figure === 'coo' ? null : s.scheme, next.words);
 }
 async function applyFigure(s) {
   try { await showFigure(s); } catch (err) { bodyFailed(s.figure, err); }
@@ -237,7 +288,8 @@ function applyPrefs(p) {
     for (const pr of props) { pr.setVisible(prefs.toy.enabled); pr.setSound(prefs.toy.sound); pr.setSrc(src); }
     if (!prefs.toy.enabled) heldProp = null;
   }
-  if (p.theme === 'dark' || p.theme === 'light') { prefs.theme = p.theme; applyTheme(p.theme); body?.set({ theme: p.theme }); }
+  if (p.theme === 'dark' || p.theme === 'light') { prefs.theme = p.theme; applyTheme(p.theme); modeBtn?.show(p.theme); body?.set({ theme: p.theme }); }
+  if (typeof p.glow === 'number') prefs.glow = p.glow;
   if (typeof p.scale === 'number') { prefs.scale = p.scale; body?.set({ bounds: bounds() }); for (const pr of props) pr.setBounds(bounds()); }
   if (typeof p.rememberPosition === 'boolean') { prefs.rememberPosition = p.rememberPosition; reportPosition(); }
   if (typeof p.user === 'string') prefs.user = p.user;
@@ -245,20 +297,34 @@ function applyPrefs(p) {
   if (typeof p.mic === 'boolean') { prefs.mic = p.mic; p.mic && !watching ? startMic() : stopMic(); }
   if (p.voice && typeof p.voice === 'object') prefs.voice = { ...prefs.voice, ...p.voice };
   if (typeof p.doubleClickChat === 'boolean') prefs.doubleClickChat = p.doubleClickChat;
+  if (typeof p.statusBubble === 'boolean') { prefs.statusBubble = p.statusBubble; setBody({ thoughtShown: p.statusBubble }); }
   if (typeof p.lockFrameRate === 'boolean') prefs.lockFrameRate = p.lockFrameRate;
+  if (typeof p.frameRate === 'number' && p.frameRate >= 0) prefs.frameRate = p.frameRate;
   // the window process does the hiding; the page only passes the setting on
   if (typeof p.hideWhenFullscreen === 'boolean') host?.hideWhenFullscreen?.(p.hideWhenFullscreen);
   if (Array.isArray(p.hoverButtons)) prefs.hoverButtons = p.hoverButtons.filter((id) => typeof id === 'string' && id in ACTIONS);
   if (p.bot) { prefs.bot = p.bot; if (!menu.hidden && !menu.querySelector('.m-head.confirm')) renderMenuHead(); }
-  if (typeof p.thinking === 'boolean') setBody({ thinking: p.thinking });
+  if (typeof p.language === 'string' && p.language !== language()) void switchLanguage(p.language);
+  if ('status' in p) setStatus(p.status);
+  refreshButtons();
+}
+
+/** A new app language: what is drawn from the page's own text is drawn again; bubbles already up keep theirs. */
+async function switchLanguage(code) {
+  await useLanguage(code);
+  document.title = t('pet.title');
+  host?.setLanguage?.(code);
+  if (!menu.hidden && !menu.querySelector('.m-head.confirm')) renderMenuHead();
   refreshButtons();
 }
 
 function onOrder(m) {
   switch (m.t) {
-    case 'init': restorePosition(m.startX); applyPrefs(m); break;
+    case 'init': restorePosition(m.startX); applyPrefs(m); if (!host) announcePainted(); break;
     case 'prefs': applyPrefs(m); break;
     case 'watching': watching = true; stopMic(); break;
+    // the settings window's 「在桌面上隐藏」: the same as the menu's 「隐藏」
+    case 'hide': host?.hide?.(); break;
     case 'say': dropAsks(); queue.push({ kind: 'say', id: m.id, beats: m.beats, i: -1 }); holdRoam(20); break;
     case 'ask': dropAsks(); queue.push({ kind: 'ask', id: m.id, question: m.question, options: m.options || [], own: m.own !== false }); holdRoam(20); break;
     case 'confirm': dropAsks(); queue.push({ kind: 'ask', confirm: true, id: m.id, question: m.question, options: m.options, own: false }); holdRoam(20); break;
@@ -267,7 +333,7 @@ function onOrder(m) {
     case 'ask-close': closeAsk(m.id); break;
     case 'act': acts.push(...m.actions); holdRoam(20); break;
     case 'listen': onListen(m); break;
-    case 'thinking': setBody({ thinking: !!m.on }); break;
+    case 'status': setStatus(m.status); break;
     case 'dialog': queue.push({ kind: 'dialog', id: m.id, d: m }); holdRoam(20); break;
     case 'dialog-update': updateDialog(m); break;
     case 'dialog-close': endDialog(m.id); break;
@@ -325,7 +391,8 @@ function stepActs() {
 /* ---------- say / ask ---------- */
 const queue = [];
 let item = null;
-const PAUSE = /[,。!?…、,.!?]/, SILENT = /[\s,。!?…、,.!?「」:()]/;
+/** Where typing pauses: sentence and clause marks, Latin and full-width (Chinese and Japanese share 。、). */
+const PAUSE = /[,.!?;:…，。！？；：、]/, SILENT = /[\s,.!?;:…，。！？；：、「」『』()（）]/;
 
 /** A newer question replaces the bot's open one; a World's confirmation stays until answered. */
 function dropAsks() {
@@ -335,6 +402,8 @@ function dropAsks() {
 
 function openBubble(kind, html) {
   bubble.className = 'bubble ' + kind;
+  bubble.removeAttribute('aria-label');
+  delete bubble.dataset.kind; delete bubble.dataset.icon;
   bubble.innerHTML = html;
   bubble.hidden = false;
   void bubble.offsetWidth;
@@ -366,7 +435,7 @@ function startItem(it) {
   item = it;
   if (it.kind === 'dialog') { openDialog(it); return; }
   if (it.kind === 'ask') {
-    openBubble('ask', '<button class="b-close" type="button" aria-label="关闭">×</button><p class="b-text"></p><div class="b-opts" hidden></div>');
+    openBubble('ask', `<button class="b-close" type="button" aria-label="${esc(t('bubble.close'))}">×</button><p class="b-text"></p><div class="b-opts" hidden></div>`);
     bubble.querySelector('.b-close').addEventListener('click', () => dismissAsk());
     it.text = it.question; it.shown = 0; it.acc = 0; it.optsShown = false;
     sfx.pop();
@@ -452,7 +521,7 @@ function showOptions(it) {
   if (it.own) {
     const form = document.createElement('form');
     form.className = 'b-own';
-    form.innerHTML = '<input type="text" maxlength="200" autocomplete="off" placeholder="自己说点什么…" aria-label="自己写回答"><button type="submit">发送</button>';
+    form.innerHTML = `<input type="text" maxlength="200" autocomplete="off" placeholder="${esc(t('bubble.ownPlaceholder'))}" aria-label="${esc(t('bubble.ownLabel'))}"><button type="submit">${esc(t('bubble.send'))}</button>`;
     form.style.animationDelay = (it.options.length * .07) + 's';
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -507,7 +576,7 @@ function dropDialogs() {
 function openDialog(it) {
   const d = it.d;
   const dots = Array.isArray(d.step) ? Array.from({ length: d.step[1] }, (_, i) => `<i class="${i + 1 < d.step[0] ? 'past' : i + 1 === d.step[0] ? 'on' : ''}"></i>`).join('') : '';
-  openBubble('talk', `${dots || d.closable ? `<div class="d-top"><span class="d-dots">${dots}</span>${d.closable ? '<button class="b-close" type="button" aria-label="跳过" title="跳过">×</button>' : ''}</div>` : ''}<p class="b-text"></p><div class="d-body" hidden></div>`);
+  openBubble('talk', `${dots || d.closable ? `<div class="d-top"><span class="d-dots">${dots}</span>${d.closable ? `<button class="b-close" type="button" aria-label="${esc(t('bubble.skip'))}" title="${esc(t('bubble.skip'))}">×</button>` : ''}</div>` : ''}<p class="b-text"></p><div class="d-body" hidden></div>`);
   bubble.querySelector('.b-close')?.addEventListener('click', () => settleDialog(it, { closed: true }));
   for (const a of d.actions || []) acts.push(a);
   it.text = d.text || ''; it.shown = 0; it.acc = 0; it.bodyShown = false; it.readUntil = 0;
@@ -539,33 +608,55 @@ function showDialogInput(it) {
     body.appendChild(row);
   } else if (input.kind === 'choices') {
     const cards = Object.assign(document.createElement('div'), { className: 'd-cards' });
+    const extra = Array.isArray(input.more?.options) ? input.more.options : [];
+    const all = [...input.options, ...extra];
     const pick = (i, speak) => {
       it.value = i;
-      cards.querySelectorAll('.d-card').forEach((c, k) => c.classList.toggle('on', k === i));
-      const o = input.options[i];
+      cards.querySelectorAll('.d-card').forEach((c) => c.classList.toggle('on', Number(c.dataset.i) === i));
+      const o = all[i];
       // the bubble stays put from here on, so the cards do not run off while Coo shows how it moves
       if (it.pinX === undefined) { const a = at()?.bubble ?? { x: innerWidth / 2, y: innerHeight }; it.pinX = a.x; it.pinY = a.y; }
       talk.motion = o?.motion ?? null; talk.next = 0;
       if (speak && o?.line) { it.text = o.line; it.shown = 0; it.acc = 0; }
     };
-    input.options.forEach((o, i) => {
+    const card = (o, k, onClick) => {
       const c = document.createElement('button');
       c.type = 'button'; c.className = 'd-card';
-      c.style.animationDelay = (i * .07) + 's';
+      c.style.animationDelay = (k * .07) + 's';
       const image = typeof o.image === 'string' && o.image.startsWith('data:image/') ? `<img class="d-cardimg" alt="" src="${esc(o.image)}">` : '';
-      c.innerHTML = `${image || (o.icon && ICONS[o.icon] ? `<span class="d-cardic">${ICONS[o.icon]}</span>` : '')}<span class="d-cardlbl">${esc(o.label)}</span>${o.level ? `<b class="d-level">${esc(o.level)}</b>` : ''}`;
-      c.addEventListener('click', () => { sfx.tick(); pick(i, true); });
+      c.innerHTML = `${image || (o.icon && ICONS[o.icon] ? `<span class="d-cardic">${ICONS[o.icon]}</span>` : '')}<span class="d-cardlbl">${esc(o.label)}</span>${o.note ? `<span class="d-cardnote">${esc(o.note)}</span>` : ''}${o.level ? `<b class="d-level">${esc(o.level)}</b>` : ''}`;
+      c.addEventListener('click', () => { sfx.tick(); onClick(); });
       cards.appendChild(c);
-      setTimeout(() => sfx.blub(), i * 70);
-    });
+      setTimeout(() => sfx.blub(), k * 70);
+      return c;
+    };
+    const add = (from, to, k0) => { for (let i = from; i < to; i++) card(all[i], k0 + i - from, () => pick(i, true)).dataset.i = String(i); };
+    const start = typeof input.value === 'number' ? input.value : 0;
+    const folded = extra.length > 0 && start < input.options.length;
+    add(0, folded ? input.options.length : all.length, 0);
+    if (folded) {
+      const more = card(input.more, input.options.length, () => {
+        // the "more" card gives its place to the first of the rest, and the cards grow to the new rows instead of jumping there
+        const from = cards.offsetHeight;
+        more.remove();
+        add(input.options.length, all.length, 0);
+        pick(input.options.length, false);
+        const to = cards.offsetHeight;
+        if (to !== from && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          cards.classList.add('unfolding');
+          cards.animate([{ height: from + 'px' }, { height: to + 'px' }], { duration: 320, easing: 'cubic-bezier(.3,1.1,.5,1)' })
+            .finished.finally(() => cards.classList.remove('unfolding'));
+        }
+      });
+    }
     body.appendChild(cards);
     const row = Object.assign(document.createElement('div'), { className: 'd-row' });
     row.appendChild(pill(input.confirm, true, () => settleDialog(it, { index: it.value ?? 0 })));
     body.appendChild(row);
-    pick(typeof input.value === 'number' ? input.value : 0, false);
+    pick(start, false);
   } else if (input.kind === 'text') {
     const form = Object.assign(document.createElement('form'), { className: 'd-field' });
-    form.innerHTML = `<input type="${input.secret ? 'password' : 'text'}" autocomplete="off" spellcheck="false" maxlength="${Number(input.maxLength) || 200}">${input.secret ? `<button class="d-peek" type="button" aria-label="显示" title="显示">${ICONS.eye}</button>` : ''}<button class="d-send" type="submit"></button>`;
+    form.innerHTML = `<input type="${input.secret ? 'password' : 'text'}" autocomplete="off" spellcheck="false" maxlength="${Number(input.maxLength) || 200}">${input.secret ? `<button class="d-peek" type="button" aria-label="${esc(t('bubble.peek'))}" title="${esc(t('bubble.peek'))}">${ICONS.eye}</button>` : ''}<button class="d-send" type="submit"></button>`;
     const field = form.querySelector('input');
     field.placeholder = input.placeholder || '';
     field.value = input.value || '';
@@ -690,9 +781,9 @@ function openInput() {
   if (item) closeBubble();
   item = { kind: 'input' };
   const expand = prefs.bot?.buttons?.chat
-    ? '<button class="b-expand" type="button" aria-label="在对话页继续写" title="在对话页继续写"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg></button>'
+    ? `<button class="b-expand" type="button" aria-label="${esc(t('bubble.expand'))}" title="${esc(t('bubble.expand'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg></button>`
     : '';
-  openBubble('ask', `<button class="b-close" type="button" aria-label="关闭">×</button><form class="b-own"><input type="text" maxlength="500" autocomplete="off" placeholder="想说什么…" aria-label="打字说话">${expand}<button type="submit">发送</button></form>`);
+  openBubble('ask', `<button class="b-close" type="button" aria-label="${esc(t('bubble.close'))}">×</button><form class="b-own"><input type="text" maxlength="500" autocomplete="off" placeholder="${esc(t('bubble.typePlaceholder'))}" aria-label="${esc(t('bubble.typeLabel'))}">${expand}<button type="submit">${esc(t('bubble.send'))}</button></form>`);
   const form = bubble.querySelector('form'), input = form.querySelector('input');
   bubble.querySelector('.b-close').addEventListener('click', () => closeBubble());
   // the chat page takes longer text and images; the draft goes with it
@@ -738,7 +829,7 @@ function onListen(m) {
   } else if (m.phase === 'heard') {
     listen.text = m.text || ''; listen.interim = '';
     listen.phase = 'done';
-    showHeard(listen.text, false, '听到了');
+    showHeard(listen.text, false, t('heard.done'));
     sfx.listenEnd();
     setBody({ listening: false });
     body?.cue('heard');
@@ -757,12 +848,63 @@ function showHeard(text, live, hint, interim = '') {
   heardEl.querySelector('.fin').textContent = text;
   // a space only before Latin text that follows Latin text or ASCII punctuation; Chinese sentences run on
   heardEl.querySelector('.interim').textContent = text && interim && /[A-Za-z0-9.,!?;:]$/.test(text) && /^[A-Za-z0-9]/.test(interim) ? ' ' + interim : interim;
-  heardEl.querySelector('.b-hint').textContent = hint || (text || interim ? '还在听…' : '正在听…');
+  heardEl.querySelector('.b-hint').textContent = hint || t(text || interim ? 'heard.more' : 'heard.listening');
 }
 function stepListen() {
   if (listen.phase === 'done' && T > listen.closeAt) {
     listen.phase = null; listen.text = ''; listen.interim = '';
     heardEl.hidden = true; trail.hidden = true;
+  }
+}
+
+/* ---------- activity: the same bubble, with conversation always taking priority ---------- */
+const status = { wanted: null, since: 0, shown: null, shownAt: 0, fadeAt: null };
+function setStatus(next) {
+  setBody({ thinking: next?.kind === 'think' });
+  const prev = status.wanted;
+  if (prev?.kind === next?.kind && prev?.text === next?.text && prev?.detail === next?.detail && prev?.count === next?.count) return;
+  if (prev?.kind !== next?.kind) status.since = T;
+  status.wanted = next;
+}
+function drawStatus(next, pop) {
+  const icon = next.kind;
+  if (!bubble.classList.contains('status') || bubble.dataset.icon !== icon) {
+    bubble.className = 'bubble status';
+    bubble.dataset.icon = icon;
+    bubble.innerHTML = `<span class="status-icon">${ICONS[`status_${icon}`] || ICONS.status_work}</span><span class="status-text"></span>`;
+  }
+  bubble.dataset.kind = next.kind;
+  const label = next.text + (next.detail ? ` · ${next.detail}` : '') + (next.count > 1 ? t('status.more', { others: next.count - 1 }) : '');
+  bubble.querySelector('.status-text').textContent = label;
+  bubble.setAttribute('aria-label', next.kind === 'think' ? t('status.thinking') : label);
+  bubble.classList.remove('fading');
+  bubble.hidden = false;
+  if (pop) { bubble.classList.remove('pop'); void bubble.offsetWidth; bubble.classList.add('pop'); }
+}
+function stepStatus() {
+  // Never replace dialogue with activity, including while a queued line waits for the body.
+  if (!prefs.statusBubble || !heardEl.hidden || item || queue.length) {
+    if (bubble.classList.contains('status')) bubble.hidden = true;
+    status.shown = null; status.fadeAt = null;
+    return;
+  }
+  if (status.fadeAt !== null && T - status.fadeAt >= .2) {
+    bubble.hidden = true;
+    status.shown = null; status.fadeAt = null;
+  }
+  const next = status.wanted, shown = status.shown;
+  if (next?.kind === 'think' && T - status.since < .6) return;
+  if (shown && next && shown.kind === next.kind && shown.text === next.text) {
+    if (shown !== next || status.fadeAt !== null) drawStatus(next, false);
+    status.shown = next; status.fadeAt = null;
+  } else if (!shown || T - status.shownAt >= 1.2) {
+    if (next) {
+      drawStatus(next, shown?.kind !== next.kind);
+      status.shown = next; status.shownAt = T; status.fadeAt = null;
+    } else if (shown && status.fadeAt === null) {
+      status.fadeAt = T;
+      bubble.classList.add('fading');
+    }
   }
 }
 
@@ -811,8 +953,7 @@ function stopMic() {
 
 /* ---------- actions: the menu's lower zone and the hover buttons draw from one list ---------- */
 const ROAM_ORDER = ['off', 'calm', 'free'];
-const ROAM = { off: '不乱动', calm: '多待着', free: '常走动' };
-const ROAM_LEVEL = { off: '低', calm: '中', free: '高' };
+const roamName = (id) => (ROAM_ORDER.includes(id) ? t(`roam.${id}`) : '');
 /** The voice button's badge: `auto` when listening all the time, else the talk key (`Alt×2`). */
 const micBadge = () => (prefs.voice.mode === 'always' ? 'auto' : prefs.voice.key || 'key');
 /** Most hover buttons shown beside the pet. */
@@ -822,12 +963,13 @@ const MAX_HOVER = 6;
  * Every button the menu and the hover buttons can show, in the menu's order. `icon`, `state` and
  * `on` read the current prefs: `state` is the line that says what the button does and where it
  * stands, `on` lights a switch that is on (undefined for plain actions). `keep` leaves the menu
- * open after a click, so a switch shows its new state there.
+ * open after a click, so a switch shows its new state there. `hoverOnly` keeps a button out of the
+ * menu.
  */
 const ACTIONS = {
   chat: {
     icon: () => ICONS.chat,
-    state: () => (prefs.doubleClickChat ? '打字和我说话(也可以双击我)' : '打字和我说话'),
+    state: () => t(prefs.doubleClickChat ? 'action.chatDoubleClick' : 'action.chat'),
     run: () => openInput(),
   },
   voice: {
@@ -835,17 +977,17 @@ const ACTIONS = {
     icon: () => (prefs.voice.enabled ? ICONS.mic : ICONS.micOff),
     badge: () => (prefs.voice.enabled ? micBadge() : ''),
     on: () => prefs.voice.enabled,
-    state: () => (!prefs.voice.enabled ? '语音输入:关 · 点一下打开'
-      : !prefs.voice.ready ? `语音输入:开,但${prefs.voice.detail || '识别服务没有就绪'} · 点一下关掉`
-      : `语音输入:开(${prefs.voice.mode === 'always' ? '自动收音' : '按键收音'})· ${prefs.voice.hint || ''}`),
+    state: () => (!prefs.voice.enabled ? t('action.voiceOff')
+      : !prefs.voice.ready ? t('action.voiceNotReady', { detail: prefs.voice.detail || t('action.voiceNoService') })
+      : t('action.voiceOn', { mode: t(prefs.voice.mode === 'always' ? 'action.voiceAlways' : 'action.voiceKey'), hint: prefs.voice.hint || '' })),
     run: () => toggleVoice(),
   },
   roam: {
-    keep: true,
+    keep: true, hoverOnly: true,
     icon: () => ICONS[`roam_${prefs.roam}`] ?? ICONS.roam_calm,
     state: () => {
       const next = ROAM_ORDER[(ROAM_ORDER.indexOf(prefs.roam) + 1) % ROAM_ORDER.length];
-      return `行为模式:${ROAM_LEVEL[prefs.roam] ?? ''} · ${ROAM[prefs.roam] ?? ''} · 点一下换成「${ROAM[next]}」`;
+      return t('action.roam', { name: roamName(prefs.roam), next: roamName(next) });
     },
     run: () => cycleRoam(),
   },
@@ -853,30 +995,30 @@ const ACTIONS = {
     keep: true,
     icon: () => (prefs.theme === 'dark' ? ICONS.moon : ICONS.sun),
     on: () => prefs.theme === 'dark',
-    state: () => (prefs.theme === 'dark' ? '夜间模式:开(浅色身体)· 点一下换白天' : '夜间模式:关(白天,深色身体)· 点一下换夜间'),
+    state: () => t(prefs.theme === 'dark' ? 'action.themeDark' : 'action.themeLight'),
     run: () => toggleTheme(),
   },
   sound: {
     keep: true,
     icon: () => (prefs.sound ? ICONS.sound : ICONS.soundOff),
     on: () => prefs.sound,
-    state: () => (prefs.sound ? '音效:开 · 点一下静音' : '音效:关 · 点一下打开'),
+    state: () => t(prefs.sound ? 'action.soundOn' : 'action.soundOff'),
     run: () => send({ t: 'prefs', sound: !prefs.sound }),
+  },
+  hide: {
+    icon: () => ICONS.eyeOff, available: () => !!host?.hide,
+    state: () => t('action.hide'),
+    run: () => host.hide(),
   },
   dress: {
     icon: () => ICONS.shirt, cls: 'dress',
-    state: () => '换配色、帽子、耳饰、眼镜、颈饰',
+    state: () => t('action.dress'),
     // an embedding app that lends dressing shows its own dress page; otherwise the pet's dress window
     run: () => {
       if (prefs.bot?.buttons?.dress) send({ t: 'control', action: 'dress' });
       else if (host?.openDress) host.openDress();
       else window.open('/dress', '_blank');
     },
-  },
-  hide: {
-    icon: () => ICONS.eyeOff, available: () => !!host?.hide,
-    state: () => '先把我藏起来(托盘里可以叫我回来)',
-    run: () => host.hide(),
   },
 };
 const available = (id) => ACTIONS[id] && (ACTIONS[id].available?.() ?? true);
@@ -920,8 +1062,8 @@ function openMenu(x, y) {
   renderMenuHead();
   const grid = Object.assign(document.createElement('div'), { className: 'm-grid' });
   for (const id of Object.keys(ACTIONS)) {
-    if (!available(id)) continue;
     const a = ACTIONS[id];
+    if (!available(id) || a.hoverOnly) continue;
     const b = document.createElement('button');
     b.type = 'button'; b.setAttribute('role', 'menuitem');
     b.className = `m-tile${a.cls ? ' ' + a.cls : ''}`;
@@ -974,13 +1116,13 @@ function renderMenuHead(confirmQuit = false) {
   if (!bot.controls) return;
   if (confirmQuit) {
     act(ICONS.power, bot.quitLabel, () => { closeMenu(); send({ t: 'control', action: 'quit' }); }, 'm-act danger');
-    act('<span>取消</span>', '取消', () => renderMenuHead(), 'm-act text');
+    act(`<span>${esc(t('menu.cancel'))}</span>`, t('menu.cancel'), () => renderMenuHead(), 'm-act text');
     return;
   }
   // only the controls the embedding app lent; a server without `buttons` lends all three
   const has = bot.buttons ?? { pause: true, settings: true, quit: true };
-  if (has.pause) act(bot.paused ? ICONS.play : ICONS.pause, bot.paused ? '继续(现在暂停着)' : '暂停', () => send({ t: 'control', action: bot.paused ? 'resume' : 'pause' }), `m-act run${bot.paused ? ' paused' : ''}`);
-  if (has.settings) act(ICONS.settings, '打开设置', () => { closeMenu(); send({ t: 'control', action: 'settings' }); });
+  if (has.pause) act(bot.paused ? ICONS.play : ICONS.pause, t(bot.paused ? 'menu.resume' : 'menu.pause'), () => send({ t: 'control', action: bot.paused ? 'resume' : 'pause' }), `m-act run${bot.paused ? ' paused' : ''}`);
+  if (has.settings) act(ICONS.settings, t('menu.settings'), () => { closeMenu(); send({ t: 'control', action: 'settings' }); });
   if (has.quit) act(ICONS.power, bot.quitLabel, () => renderMenuHead(true), 'm-act power');
 }
 function closeMenu() { menu.hidden = true; }
@@ -1078,13 +1220,26 @@ function stepTools() {
 /* ---------- pointer ---------- */
 let pointerSeen = false;
 const lastPointer = { x: 0, y: 0 };
-let interactive = null;
-/** `by`: which check decided, 'move' (the page's pointermove) or 'poll' (the window's cursor report). */
+/** Whether the page is on screen and drawing; the mouse is not taken while it is not. */
+const FRAME_STALL_MS = 1000;
+let lastFrameAt = performance.now();
+const rendering = () => document.visibilityState === 'visible' && performance.now() - lastFrameAt < FRAME_STALL_MS;
+/** How often the wish for the mouse is renewed; the window process's lease is longer. */
+const MOUSE_RENEW_MS = 500;
+let interactive = null, renewedAt = -Infinity;
+/**
+ * `by`: which check decided, 'move' (the page's pointermove) or 'poll' (the window's cursor report).
+ * `on` is a wish renewed as a lease; see host/mouse-lease.cjs.
+ */
 function setInteractive(on, by) {
-  if (!host || interactive === on) return;
+  if (!host) return;
+  const now = performance.now();
+  const changed = interactive !== on;
+  if (!changed && !(on && now - renewedAt >= MOUSE_RENEW_MS)) return;
   interactive = on;
+  renewedAt = now;
   host.setInteractive(on);
-  logPointer('flip', by);
+  if (changed) logPointer('flip', by);
 }
 
 /**
@@ -1129,13 +1284,15 @@ function writePointer(now) {
   diag.types.clear();
 }
 
-const UI_SELECTOR = '.bubble:not([hidden]), .menu:not([hidden]), .tools:not([hidden])';
+const UI_SELECTOR = '.bubble:not(.status):not([hidden]), .menu:not([hidden]), .tools:not([hidden])';
 const overUi = (e) => e.target.closest && e.target.closest(UI_SELECTOR);
 document.addEventListener('pointermove', (e) => {
   pointerSeen = true;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
   const p = { x: e.clientX, y: e.clientY };
   cursor.at = p;
+  // a move carries the buttons that are really down: a press whose release was missed ends here
+  if (pressing && e.buttons === 0) pressing = false;
   // while the window moves to another display, moves may come in either display's coordinates; the drag shifts over once it has moved
   let over = heldProp;
   if (!shifting) {
@@ -1151,7 +1308,7 @@ document.addEventListener('pointermove', (e) => {
     diag.type = e.pointerType;
     if (!first) logPointer('type', 'move');
   }
-  setInteractive(pressing || hit || ui, 'move');
+  setInteractive(rendering() && (pressing || hit || ui), 'move');
   followDrag(p);
 });
 /**
@@ -1169,7 +1326,7 @@ host?.onCursor?.((p) => {
   const el = document.elementFromPoint(p.x, p.y);
   const hit = !!body?.hit(p) || !!propAt(p), ui = !!el?.closest?.(UI_SELECTOR);
   diag.poll = { at: performance.now(), x: p.x, y: p.y, hit, ui };
-  setInteractive(pressing || hit || ui, 'poll');
+  setInteractive(rendering() && (pressing || hit || ui), 'poll');
 });
 /** A press that began on the body and has not been let go of: the window keeps the mouse meanwhile. */
 let pressing = false;
@@ -1287,6 +1444,17 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ---------- layout ---------- */
+/**
+ * Bubbles up to TAIL_CENTER wide (empty, or a word or two) point their tail from their middle; wider ones
+ * move it over to Coo by TAIL_FOLLOW wide (#139). Between the two it slides, so a bubble growing as the line
+ * types out carries its tail along with it.
+ */
+const TAIL_CENTER = 70, TAIL_FOLLOW = 130;
+/** Where the tail's tip sits along a bubble `bw` wide whose left edge is `x` left of Coo. */
+function tailAt(bw, x) {
+  const k = clamp((bw - TAIL_CENTER) / (TAIL_FOLLOW - TAIL_CENTER), 0, 1);
+  return bw / 2 + (clamp(x, 22, bw - 22) - bw / 2) * k;
+}
 function place(el, a, extraUp, side) {
   const bw = el.offsetWidth, bh = el.offsetHeight;
   const cx = a.x + side * (bw / 2 + 10);
@@ -1294,16 +1462,21 @@ function place(el, a, extraUp, side) {
   const top = Math.max(8, a.y - bh - extraUp);
   el.style.left = f(left) + 'px';
   el.style.top = f(top) + 'px';
-  el.style.setProperty('--tail', f(clamp(a.x - left, 22, bw - 22)) + 'px');
+  el.style.setProperty('--tail', f(tailAt(bw, a.x - left)) + 'px');
   return { left, top, bw, bh };
 }
 function placeTalk(it, a) {
   const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+  // picked up, or still falling when the bubble opened, Coo takes the bubble along until it has landed, and it
+  // stays where Coo came down; the hops and strolls of stepTalkMotion's demo (talk.motion) are Coo's own and leave it be
+  const mode = at()?.mode;
+  if (mode === 'drag' || (FLYING.has(mode) && !talk.motion)) it.carried = true;
+  if (it.carried) { it.pinX = a.x; it.pinY = a.y; if (!FLYING.has(mode)) it.carried = false; }
   const left = clamp(it.pinX - bw / 2, 10, Math.max(10, innerWidth - bw - 10));
   const top = Math.max(8, it.pinY - bh - 18);
   bubble.style.left = f(left) + 'px';
   bubble.style.top = f(top) + 'px';
-  bubble.style.setProperty('--tail', f(clamp(a.x - left, 22, bw - 22)) + 'px');
+  bubble.style.setProperty('--tail', f(tailAt(bw, a.x - left)) + 'px');
   return { left, top, bw, bh };
 }
 
@@ -1367,17 +1540,22 @@ function inkRgb() {
 }
 const inflate = (r, d) => ({ x: r.x - d, y: r.y - d, width: r.width + 2 * d, height: r.height + 2 * d });
 const rectOf = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
+/** A bubble's rect with its shadow (0 8px 22px) and its tail below it, none of which is the screen behind. */
+const shadowed = (r) => ({ x: r.x - 14, y: r.y - 14, width: r.width + 28, height: r.height + 14 + 36 });
+/** Modes in which the body flies or is carried: a screen copy taken now would be of where it was a moment ago. */
+const FLYING = new Set(['air', 'drag', 'land']);
 
 /** Samples a ring around the body (past the halo's reach, minus the page's own bubbles) and flips the halo. */
 async function probeBackdrop() {
-  const ink = inkRgb(), b = at()?.box;
-  if (!ink || !b) return;
+  const l = at(), ink = inkRgb(), b = l?.box;
+  if (!ink || !b || FLYING.has(l.mode)) return;
   const S = bounds().S;
-  const near = inflate({ x: b.x, y: b.y, width: b.w, height: b.h }, 4 + 34 * S), far = inflate(near, 8 + 40 * S);
+  // the ring starts past the halo, so a wide one (prefs.glow) is not taken for the screen behind
+  const near = inflate({ x: b.x, y: b.y, width: b.w, height: b.h }, Math.max(4 + 34 * S, 4 + 2 * prefs.glow)), far = inflate(near, 8 + 40 * S);
   const x = Math.max(0, far.x), y = Math.max(0, far.y);
   const rect = { x, y, width: Math.min(innerWidth, far.x + far.width) - x, height: Math.min(innerHeight, far.y + far.height) - y };
-  const skip = [near, ...[bubble, heardEl, menu, tools].filter((el) => !el.hidden).map(rectOf)];
-  const px = await host.sampleBackdrop(rect, skip);
+  const covers = [bubble, heardEl, menu, tools].filter((el) => !el.hidden).map((el) => shadowed(rectOf(el)));
+  const px = await host.sampleBackdrop(rect, [near, ...covers]);
   // this platform cannot read the screen cheaply: the halo just stays
   if (px === null) { backdrop.on = true; backdrop.fixed = true; return; }
   const n = px.length / 3;
@@ -1389,34 +1567,54 @@ async function probeBackdrop() {
     if (Math.hypot(l - L, a - A, b - B) < SAME_COLOR) same++;
   }
   const share = same / n;
+  // while the page's own bubbles cover part of the ring the halo may come on, but does not go off
+  if (backdrop.on && covers.length) return;
   backdrop.on = backdrop.on ? share >= HALO_OFF : share > HALO_ON;
 }
 function stepBackdrop(dt) {
   const now = performance.now() / 1000;
-  if (host?.sampleBackdrop && !backdrop.fixed && !backdrop.busy && now >= backdrop.next && document.visibilityState === 'visible') {
+  if (host?.sampleBackdrop && prefs.glow > 0 && !backdrop.fixed && !backdrop.busy && now >= backdrop.next && document.visibilityState === 'visible') {
     backdrop.busy = true;
     probeBackdrop().catch(() => {}).finally(() => { backdrop.busy = false; backdrop.next = performance.now() / 1000 + BACKDROP_EVERY; });
   }
   const k = backdrop.k + ((backdrop.on ? 1 : 0) - backdrop.k) * Math.min(1, dt * 6);
   backdrop.k = k < .005 ? 0 : k;
   // the body is in its own frame: it takes the halo as a CSS filter
-  body?.setHalo(backdrop.k * HALO_STRENGTH);
+  body?.setHalo(backdrop.k * HALO_STRENGTH, prefs.glow);
 }
 
 /* ---------- loop ---------- */
 /**
- * Frames per second: MOVING_FPS while the body moves (its layout's `moving`) or a prop is off the floor,
- * and always while `lockFrameRate` is on; RESTING_FPS otherwise. Each frame redraws the whole figure, so
- * the window's CPU and GPU time grows with this rate; frames do not follow the display's refresh rate.
+ * Frames per second: `prefs.frameRate` while the body moves (its layout's `moving`) or a prop is off the floor,
+ * and always while `lockFrameRate` is on, RESTING_FPS otherwise; a frame rate of 0, or one above the
+ * display's, draws on every display refresh. Each frame redraws the whole figure, so the window's CPU and
+ * GPU time grows with this rate.
  */
-const MOVING_FPS = 60, RESTING_FPS = 30;
+const RESTING_FPS = 30;
 /** When the next frame is due (a rAF timestamp), and the gap between frames at the current rate. */
-let last = performance.now(), dueAt = 0, gap = 1000 / MOVING_FPS;
+let last = performance.now(), dueAt = 0, gap = 0;
 /** The last error the frame loop logged, so one that keeps recurring is reported once, not per frame. */
 let frameErr = null;
+/**
+ * Frames whose timestamp was not past the one before (a zero or negative dt), and when that was last logged (ms):
+ * one such frame used to leave the whale without hair, tail and skirt until restart (#87), and where these
+ * timestamps come from is not known yet. Logged at most once a minute, with the count so far. The first frame is
+ * left out: `last` starts at the page's clock, which may be ahead of the first frame's timestamp.
+ */
+let stalls = 0, stallLoggedAt = -Infinity, framed = false;
 function frame(now) {
+  // frames stop coming while the window is hidden or occluded, which `rendering()` reads
+  lastFrameAt = performance.now();
   // a display refresh up to a quarter gap early counts as on time, so the rate averages out over refresh rates it does not divide
   if (now < dueAt - gap / 4) { requestAnimationFrame(frame); return; }
+  if (framed && now <= last) {
+    stalls++;
+    if (performance.now() - stallLoggedAt > 60_000) {
+      stallLoggedAt = performance.now();
+      console.warn(`[pet] 帧时间戳没有前进(累计 ${stalls} 次):now=${now} 上一帧=${last} 页面=${document.visibilityState} 焦点=${document.hasFocus()} 模式=${at()?.mode ?? '-'}`);
+    }
+  }
+  framed = true;
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   try {
     T += dt;
@@ -1425,6 +1623,7 @@ function frame(now) {
     stepTalkRead();
     stepTalkMotion();
     stepListen();
+    stepStatus();
     setBody({ dialogOpen: !!item || !!listen.phase });
     body?.tick(dt);
     for (const pr of props) pr.tick(dt);
@@ -1433,6 +1632,8 @@ function frame(now) {
     stepBackdrop(dt);
     stepTools();
     layout();
+    // the frame's own time, so the layer shows frames as far apart as they were drawn
+    if (overlayOn) host.overlayFrame(overlayRect(), performance.timeOrigin + now);
   } catch (err) {
     // a throwing step must not take the loop with it: the next frame is only asked for below, and
     // without it the pet freezes for good (a broken figure throws again on every frame it draws)
@@ -1441,7 +1642,8 @@ function frame(now) {
   }
   const full = prefs.lockFrameRate || !!at()?.moving
     || props.some((pr) => { const st = pr.state(); return !!st && (st.air || st.dragging); });
-  gap = 1000 / (full ? MOVING_FPS : RESTING_FPS);
+  // a moving rate of 0 draws on every display refresh
+  gap = full ? (prefs.frameRate > 0 ? 1000 / prefs.frameRate : 0) : 1000 / RESTING_FPS;
   // a frame more than a gap late starts the count again instead of drawing the missed ones back to back
   dueAt = now - dueAt > gap ? now + gap : dueAt + gap;
   // moving frames wait on display refreshes: a timer can wake late, which a body at rest hides and a moving one shows as stutter

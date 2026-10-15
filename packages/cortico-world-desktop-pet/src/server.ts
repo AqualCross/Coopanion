@@ -9,7 +9,10 @@
  * - `/api/toy`: the toy's picture the person chose on the dressing page, which posts it there; with
  *   none saved it redirects to the built-in one.
  * - `/api/figures`: the figure packs (src/packs.ts) the pages may load, Coo's first; `/packs/<id>/…`:
- *   an installed pack's files (a built-in one is under `/web/`).
+ *   an installed pack's files (a built-in one is under `/web/`). `/api/figures/status`: the installed
+ *   packs that did not load and why, and whether packs can be imported here; `POST /api/figures/import`
+ *   (a zip, or the page's framing of folders), `…/import/install` and `…/import/cancel` import them
+ *   (src/pack-import.ts).
  * - `/figure-frame`: the sandbox a pack's code runs in. Its own CSP sandboxes it (an opaque
  *   origin) and denies it every connection; scripts and images come from this server only. Files
  *   under `/web/` and `/packs/` answer that opaque origin's CORS requests; nothing else does,
@@ -19,12 +22,19 @@
  *   live one, except that a browser tab only watches while the pet window is connected. A
  *   watching tab still sends typed text, preference changes and run-control clicks.
  *   Binary frames from the pet connection are 16 kHz mono PCM16 microphone audio.
+ * - `/overlay` and `/socket?role=overlay`: the OBS overlay page and its feed, while `overlay()` is on
+ *   (404 and a closed socket otherwise). `/socket?role=overlay-source` is the pet window process: it is told
+ *   `{ t: 'overlay', on }` (on while the overlay is on and a page watches) and its binary frames
+ *   (host/overlay.cjs) go to every overlay page as they are; when it goes, the pages are sent a frame that clears them.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { extname, join, normalize, sep } from 'node:path';
+import { basename, extname, join, normalize, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { packFile, type FigurePack } from './packs.ts';
+import { languageTag, type Language } from 'cortico/core/language.ts';
+import { packFile, type FigurePack, type PackProblem } from './packs.ts';
+import { BUNDLE_TYPE, IMPORT_MAX, PACK_DEPTH, filesFromBundle, filesFromZip, type PackImporter } from './pack-import.ts';
+import { petText, type PetText } from './i18n/index.ts';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -40,6 +50,8 @@ const MIME: Record<string, string> = {
 const PAGES: Record<string, string> = { '/pet': 'pet.html', '/dress': 'dress.html' };
 const LOOPBACK = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
 const PORT_ATTEMPTS = 10;
+/** The pages' own CSP. */
+const PAGE_CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; img-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'self' http://127.0.0.1:* http://localhost:*";
 /** What a watching pet page may still send: input that is the person's whichever page it came from. */
 const WATCHER_MESSAGES = new Set(['text', 'prefs', 'control']);
 
@@ -65,6 +77,16 @@ export interface PetServerOptions {
   onToySaved?(): void;
   /** The figure packs, looked up again for each request. */
   packs?(): FigurePack[];
+  /** What was wrong in the pack directories, looked up again for each request. */
+  packProblems?(): PackProblem[];
+  /** Installs packs the dressing page sends; without it the page offers no import. */
+  importer?: PackImporter;
+  /** The app language, stamped on each page's `<html lang>` as it is served; the page loads its text in it. `zh` when absent. */
+  language?(): Language;
+  /** The text table of the app language, for errors; Chinese when absent. */
+  text?(): PetText;
+  /** Whether the OBS overlay is served; off when absent. */
+  overlay?(): boolean;
 }
 
 export class PetServer {
@@ -74,6 +96,11 @@ export class PetServer {
   private petIsWindow = false;
   /** Dressing pages and pet pages that only watch. */
   private readonly dressers = new Set<WebSocket>();
+  /** The pet window process sending the overlay's frames, and the overlay pages watching. */
+  private overlaySource: WebSocket | null = null;
+  private readonly overlayViewers = new Set<WebSocket>();
+  /** What the source was last told. */
+  private overlayTold: boolean | null = null;
   private boundPort = 0;
 
   constructor(private readonly opts: PetServerOptions) {}
@@ -82,12 +109,21 @@ export class PetServer {
     return this.boundPort;
   }
 
+  private get t(): PetText {
+    return this.opts.text?.() ?? petText();
+  }
+
   get origin(): string {
     return this.boundPort ? `http://127.0.0.1:${this.boundPort}` : '';
   }
 
   get petConnected(): boolean {
     return this.pet !== null && this.pet.readyState === this.pet.OPEN;
+  }
+
+  /** The connected pet page is the pet window, not a browser tab. */
+  get petInWindow(): boolean {
+    return this.petConnected && this.petIsWindow;
   }
 
   async start(): Promise<number> {
@@ -116,13 +152,15 @@ export class PetServer {
       });
       return this.boundPort;
     }
-    throw new Error(`端口 ${base}–${base + PORT_ATTEMPTS - 1} 都被占用:${lastErr?.message ?? ''}`);
+    throw new Error(this.t.portsTaken(base, base + PORT_ATTEMPTS - 1, lastErr?.message ?? ''));
   }
 
   async stop(): Promise<void> {
-    for (const ws of [this.pet, ...this.dressers]) ws?.close();
+    for (const ws of [this.pet, ...this.dressers, this.overlaySource, ...this.overlayViewers]) ws?.close();
     this.pet = null;
     this.dressers.clear();
+    this.overlaySource = null;
+    this.overlayViewers.clear();
     this.wss?.close();
     this.wss = null;
     const http = this.http;
@@ -147,6 +185,21 @@ export class PetServer {
     for (const ws of [this.pet, ...this.dressers]) if (ws && ws.readyState === ws.OPEN) ws.send(text);
   }
 
+  /** Follows `overlay()`: off closes the overlay pages; the source streams while it is on and a page watches. */
+  syncOverlay(): void {
+    if (!this.overlayEnabled) for (const ws of this.overlayViewers) ws.close(4003, 'overlay off');
+    const source = this.overlaySource;
+    if (!source || source.readyState !== source.OPEN) return;
+    const on = this.overlayEnabled && this.overlayViewers.size > 0;
+    if (on === this.overlayTold) return;
+    this.overlayTold = on;
+    source.send(JSON.stringify({ t: 'overlay', on }));
+  }
+
+  private get overlayEnabled(): boolean {
+    return this.opts.overlay?.() ?? false;
+  }
+
   /** A loopback Host, and a loopback or absent Origin; an opaque origin (the figure frame) only reads. */
   private allowed(req: IncomingMessage, write: boolean): boolean {
     if (!LOOPBACK.test(req.headers.host ?? '')) return false;
@@ -163,6 +216,8 @@ export class PetServer {
   private accept(ws: WebSocket, req: IncomingMessage): void {
     const params = new URL(req.url ?? '/', 'http://x').searchParams;
     const fromWindow = params.get('host') === 'window';
+    if (params.get('role') === 'overlay-source') return this.acceptOverlaySource(ws);
+    if (params.get('role') === 'overlay') return this.acceptOverlayViewer(ws);
     ws.send(JSON.stringify({ t: 'init', ...this.opts.snapshot() }));
     // the pet window outranks a browser tab: a tab opened while the window is connected only watches
     const watcher = params.get('role') !== 'pet' || (!fromWindow && this.petConnected && this.petIsWindow);
@@ -199,6 +254,31 @@ export class PetServer {
     ws.on('close', () => this.dressers.delete(ws));
   }
 
+  private acceptOverlaySource(ws: WebSocket): void {
+    this.overlaySource?.close(4000, 'replaced');
+    this.overlaySource = ws;
+    this.overlayTold = null;
+    ws.on('message', (data, isBinary) => {
+      if (!isBinary || !this.overlayEnabled) return;
+      for (const viewer of this.overlayViewers) if (viewer.readyState === viewer.OPEN) viewer.send(data, { binary: true });
+    });
+    ws.on('close', () => {
+      if (this.overlaySource !== ws) return;
+      this.overlaySource = null;
+      // the window process is gone: the pages must not keep its last picture
+      const clear = Buffer.alloc(24);
+      for (const viewer of this.overlayViewers) if (viewer.readyState === viewer.OPEN) viewer.send(clear, { binary: true });
+    });
+    this.syncOverlay();
+  }
+
+  private acceptOverlayViewer(ws: WebSocket): void {
+    if (!this.overlayEnabled) { ws.close(4003, 'overlay off'); return; }
+    this.overlayViewers.add(ws);
+    ws.on('close', () => { this.overlayViewers.delete(ws); this.syncOverlay(); });
+    this.syncOverlay();
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.allowed(req, req.method !== 'GET' && req.method !== 'HEAD')) { res.writeHead(421).end(); return; }
     const url = new URL(req.url ?? '/', 'http://x');
@@ -209,10 +289,19 @@ export class PetServer {
         vocab: m.vocab.map(({ id: w, kind, seconds, lasting }) => ({ id: w, kind, seconds, ...(lasting ? { lasting } : {}) })), sounds: m.sounds, can: m.can,
       })));
     }
+    if (req.method === 'GET' && path === '/api/figures/status') {
+      return json(res, 200, {
+        importable: !!this.opts.importer, max: IMPORT_MAX, depth: PACK_DEPTH,
+        problems: (this.opts.packProblems?.() ?? []).filter((p) => !p.loaded).map((p) => ({ dir: basename(p.dir), reason: p.reason })),
+      });
+    }
+    if (req.method === 'POST' && path.startsWith('/api/figures/import') && this.opts.importer) return this.importRequest(req, res, path, this.opts.importer);
     if (req.method === 'GET' && path === '/figure-frame') {
       const self = `http://${req.headers.host}`;
       return this.sendFile(res, join(this.opts.webDir, 'figure-frame.html'), [
-        'sandbox allow-scripts', "default-src 'none'", `script-src ${self}`, `img-src ${self} data: blob:`, "style-src 'unsafe-inline'", "connect-src 'none'", `frame-ancestors ${self}`,
+        'sandbox allow-scripts', "default-src 'none'", `script-src ${self}`, `img-src ${self} data: blob:`, "style-src 'unsafe-inline'", "connect-src 'none'",
+        // the pet page holds it, and the console that shows the pet page in its own frames (another local port) is an ancestor too
+        `frame-ancestors ${self} http://127.0.0.1:* http://localhost:*`,
       ].join('; '));
     }
     if (req.method === 'GET' && path.startsWith('/packs/')) {
@@ -268,12 +357,50 @@ export class PetServer {
     }
     if (req.method !== 'GET') { res.writeHead(405).end(); return; }
     if (path === '/') { res.writeHead(302, { location: '/pet' }).end(); return; }
+    if (path === '/overlay') {
+      if (!this.overlayEnabled) { res.writeHead(404).end(); return; }
+      return this.sendPage(res, join(this.opts.webDir, 'overlay.html'));
+    }
     const file = PAGES[path] ?? (path.startsWith('/web/') ? path.slice(5) : null);
     if (!file) { res.writeHead(404).end(); return; }
     const root = normalize(this.opts.webDir).replace(/[\\/]+$/, '') + sep;
     const full = normalize(join(root, file));
     if (!full.startsWith(root)) { res.writeHead(403).end(); return; }
+    if (PAGES[path]) return this.sendPage(res, full);
     return this.sendFile(res, full, null, path.startsWith('/web/') && req.headers.origin === 'null');
+  }
+
+  /** A page, its `<html lang>` set to the app language (`zh` as `zh-CN`). */
+  private async sendPage(res: ServerResponse, full: string): Promise<void> {
+    const lang = languageTag(this.opts.language?.() ?? 'zh');
+    try {
+      const html = (await readFile(full, 'utf8')).replace(/<html lang="[^"]*"/, `<html lang="${lang}"`);
+      res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache', 'content-security-policy': PAGE_CSP });
+      res.end(html);
+    } catch {
+      res.writeHead(404).end();
+    }
+  }
+
+  private async importRequest(req: IncomingMessage, res: ServerResponse, path: string, importer: PackImporter): Promise<void> {
+    if (path === '/api/figures/import') {
+      const type = (req.headers['content-type'] ?? '').split(';')[0]!.trim();
+      if (type !== 'application/zip' && type !== BUNDLE_TYPE) return json(res, 415, { error: this.t.importing.zipOrFolder });
+      const bytes = await readBytes(req, IMPORT_MAX);
+      if (!bytes) return json(res, 413, { error: this.t.importing.overLimit(IMPORT_MAX / 1048576) });
+      const files = type === BUNDLE_TYPE ? filesFromBundle(bytes, this.t.importing) : filesFromZip(bytes, this.t.importing);
+      if (typeof files === 'string') return json(res, 400, { error: files });
+      const out = await importer.stage(files, type === BUNDLE_TYPE);
+      return json(res, 'error' in out ? 400 : 200, out);
+    }
+    const body = await readBody(req);
+    const msg = body ? parse(body) : null;
+    if (path === '/api/figures/import/install' && msg && typeof msg.token === 'string' && Array.isArray(msg.dirs)) {
+      const out = await importer.install(msg.token, msg.dirs.filter((d): d is string => typeof d === 'string'));
+      return json(res, 'error' in out ? 400 : 200, out);
+    }
+    if (path === '/api/figures/import/cancel') { await importer.cancel(); return json(res, 200, { ok: true }); }
+    return json(res, 400, { error: 'bad request' });
   }
 
   /** A file with the pages' CSP (or `csp`); `frame` answers the figure frame's CORS request. */
@@ -283,7 +410,7 @@ export class PetServer {
       res.writeHead(200, {
         'content-type': MIME[extname(full)] ?? 'application/octet-stream',
         'cache-control': 'no-cache',
-        'content-security-policy': csp ?? "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; img-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'self' http://127.0.0.1:* http://localhost:*",
+        'content-security-policy': csp ?? PAGE_CSP,
         ...(frame ? { 'access-control-allow-origin': 'null' } : {}),
       });
       res.end(bytes);
@@ -305,6 +432,22 @@ function parse(text: string): PageMessage | null {
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
+}
+
+/** The body of `req`, or null when it is longer than `max` bytes or breaks off. */
+function readBytes(req: IncomingMessage, max: number): Promise<Uint8Array | null> {
+  return new Promise((done) => {
+    if (Number(req.headers['content-length'] ?? 0) > max) { req.resume(); done(null); return; }
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > max) { req.destroy(); done(null); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => done(Buffer.concat(chunks)));
+    req.on('error', () => done(null));
+  });
 }
 
 const MAX_BODY = 64 * 1024;

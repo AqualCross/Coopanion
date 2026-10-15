@@ -15,9 +15,25 @@
  * the Dock, and the microphone is asked for before the page opens it (the app's Info.plist
  * carries the reason macOS shows). The keyboard is not taken for a question's number keys there:
  * macOS gives no way to hand it back to the app that had it.
+ *
+ * The tray's words follow the app language the page reports (`petHost.setLanguage`), from the pages'
+ * tables (web/i18n); the windows' titles are the pages' own.
  */
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, session, shell, systemPreferences } = require('electron');
 const { join } = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { createCursorSource } = require('./cursor.cjs');
+const { createMouseLease } = require('./mouse-lease.cjs');
+const { createOverlaySource } = require('./overlay.cjs');
+
+/** The pages' text table of `code`, falling back as web/i18n.js does. */
+async function pageText(code) {
+  const load = async (c) => {
+    if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(c)) return null;
+    try { return (await import(pathToFileURL(join(__dirname, '..', 'web', 'i18n', `${c}.js`)).href)).default; } catch { return null; }
+  };
+  return { ...await load('en'), ...await load(code === 'zh' || code === 'zh-Hant' ? 'zh' : 'en'), ...await load(code) };
+}
 
 /** Milliseconds between the cursor reports the page gets. */
 const CURSOR_EVERY_MS = 100;
@@ -125,7 +141,18 @@ const autoHideTaskbarEdge = (() => {
  */
 const AUTOHIDE_TASKBAR_GAP = 3;
 
-/** The part of display `d` the window covers: its work area, off the edge an auto-hidden taskbar waits on. */
+/**
+ * DIP the window stays off the bottom of the display when it reaches down over a taskbar there: a window
+ * covering the whole display would be taken for a full-screen app (see AUTOHIDE_TASKBAR_GAP).
+ */
+const OVERHANG_GAP = 3;
+
+/**
+ * The part of display `d` the window covers: its work area, off the edge an auto-hidden taskbar waits on.
+ * On Windows, over a taskbar at the bottom it reaches down past the work area by `below` DIP, so what a
+ * figure draws under the floor (legs hanging over the edge while it sits) shows over the taskbar; the page
+ * keeps the floor at the work area's bottom.
+ */
 function coverArea(d) {
   let { x, y, width, height } = d.workArea;
   const b = d.bounds, edge = autoHideTaskbarEdge(), gap = AUTOHIDE_TASKBAR_GAP;
@@ -134,7 +161,9 @@ function coverArea(d) {
   if (edge === 'top' && y === b.y) { y += gap; height -= gap; }
   if (edge === 'right' && x + width === b.x + b.width) width -= gap;
   if (edge === 'bottom' && y + height === b.y + b.height) height -= gap;
-  return { x, y, width, height };
+  const strip = b.y + b.height - (y + height);
+  const below = process.platform === 'win32' ? Math.max(0, strip - OVERHANG_GAP) : 0;
+  return { x, y, width, height: height + below, below };
 }
 
 /** A window's HWND as a BigInt. */
@@ -146,8 +175,9 @@ function hwndOf(win) {
 /**
  * Whether the foreground window fills the whole monitor the window `own` is on, as a game, a video
  * or a browser in full screen does. A window still carrying a title bar never counts: a maximized
- * window reaches past the monitor's edges once an auto-hidden taskbar stops reserving its strip,
- * and what tells it apart from a full screen window is that going full screen clears that bar
+ * window reaches past the monitor's edges where no taskbar reserves a strip (an auto-hidden one, or
+ * none on that monitor), and what tells it apart from a full screen window is that going full screen
+ * clears that bar
  * (Chromium keeps the maximized state behind, so the state alone cannot separate the two). Nor do
  * the pet window and the desktop. Null off Windows or when koffi does not load.
  */
@@ -164,16 +194,15 @@ const fullscreen = (() => {
     const GetMonitorInfoW = user32.func('int __stdcall GetMonitorInfoW(intptr_t monitor, void *info)');
     // MONITORINFO is its own size, the monitor RECT, the work RECT and flags
     const MONITORINFO_BYTES = 40, MONITOR_DEFAULTTONEAREST = 2;
-    // GWL_STYLE and GWL_EXSTYLE, and the two bits that tell a full screen window from a filled one
-    const GWL_STYLE = -16, GWL_EXSTYLE = -20, WS_CAPTION = 0x00c00000, WS_EX_TOPMOST = 0x00000008;
+    // going full screen clears the title bar a maximized window keeps
+    const GWL_STYLE = -16, WS_CAPTION = 0x00c00000;
     // the desktop's own windows: they cover the monitor but are not an application
     const DESKTOP_CLASSES = new Set(['Progman', 'WorkerW']);
     return (own) => {
       const hwnd = BigInt(GetForegroundWindow());
       if (hwnd === 0n || hwnd === own) return false;
-      // a title bar means an ordinary window that happens to reach the monitor's edges, unless it is
-      // one of the always-on-top layers a player draws its full screen picture in
-      if ((GetWindowLongW(hwnd, GWL_STYLE) & WS_CAPTION) !== 0 && (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) === 0) return false;
+      // a title bar means an ordinary window that happens to reach the monitor's edges, always on top or not
+      if ((GetWindowLongW(hwnd, GWL_STYLE) & WS_CAPTION) !== 0) return false;
       const monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
       if (monitor !== MonitorFromWindow(own, MONITOR_DEFAULTTONEAREST)) return false;
       const name = Buffer.alloc(128);
@@ -263,7 +292,12 @@ function trayIcon() {
 function runPetHost({ url, parentPid = 0, tray: withTray = true }) {
   if (!url) throw new Error('pet host needs --pet-url');
   const origin = new URL(url).origin;
-  let win = null, tray = null, dress = null;
+  let win = null, tray = null, dress = null, cursor;
+  // who holds the mouse, and when it is given back
+  const mouse = createMouseLease({ getWindow: () => win });
+  // the window as an OBS layer, while the World asks for it
+  const overlay = createOverlaySource({ origin, getWindow: () => win });
+  app.once('will-quit', () => overlay.stop());
   /** Id of the display whose work area the window covers. */
   let displayId = null;
   /** The setting, and whether it is what hid the window. */
@@ -275,12 +309,14 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true }) {
   /** Moves the window over display `d`; returns the area it now covers. */
   const cover = (d) => {
     displayId = d.id;
-    const area = coverArea(d);
-    win.setBounds(area);
+    const area = coverArea(d), { below, ...rect } = area;
+    win.setBounds(rect);
     // Windows: a window moved onto a display with another scale factor is resized by the DPI
     // change to its old size times the ratio of the two scales; once it is on the new display, the
     // same bounds set again hold.
-    win.setBounds(area);
+    win.setBounds(rect);
+    // where the floor is: the page keeps it this far above the window's bottom
+    win.webContents.send('pet:floor', below);
     return area;
   };
 
@@ -298,7 +334,7 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true }) {
       x: wa.x, y: wa.y, width: wa.width, height: wa.height,
       transparent: true, frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
       fullscreenable: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, show: false,
-      backgroundColor: '#00000000', title: 'Cortico 桌宠',
+      backgroundColor: '#00000000', title: 'Cortico',
       // Windows: Chromium-based apps treat a topmost window without WS_EX_TOOLWINDOW as covering them and stop painting while the pet takes the mouse
       ...(process.platform === 'win32' ? { type: 'toolbar' } : {}),
       webPreferences: {
@@ -319,17 +355,32 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true }) {
       return { action: 'deny' };
     });
     win.once('ready-to-show', () => win.showInactive());
-    // the page learns where the cursor is even when the click-through window misses its moves
-    let last = '';
+    // The page cannot tell for itself that it is hidden (background throttling is off, so it always reads as
+    // visible): the window tells it, for the settings window's 「在桌面上 / 已隐藏」.
+    win.on('show', () => win?.webContents.send('pet:shown', true));
+    win.on('hide', () => { win?.webContents.send('pet:shown', false); mouse.release(); });
+    // Zoom stays at 1: the cursor below is sent in DIPs and the page hit-tests with them as CSS pixels,
+    // so any zoom flips the window between click-through and interactive. A drawing tablet's shortcut
+    // keys are a keyboard and can send Ctrl+- to the focused pet, and the zoom is saved per host.
+    win.webContents.on('before-input-event', (event, input) => {
+      if ((input.control || input.meta) && (['-', '_', '=', '+', '0'].includes(input.key) || ['NumpadAdd', 'NumpadSubtract', 'Numpad0'].includes(input.code))) event.preventDefault();
+    });
+    win.webContents.on('did-finish-load', () => { win.webContents.setZoomLevel(0); overlay.pageLoaded(); win.webContents.send('pet:floor', coverArea(display()).below); });
+    // The page learns where the cursor is even when the click-through window misses its moves, and
+    // it renews the mouse lease in its answer to every report: the report goes out on every tick,
+    // not only when the pointer moved, so a cursor that rests still still gets a verdict.
+    let lastVisible = null;
     const cursorTimer = setInterval(() => {
-      if (!win || !win.isVisible()) return;
-      const pt = screen.getCursorScreenPoint(), b = win.getBounds();
+      if (!win) return;
+      const visible = win.isVisible();
+      // the input shape does not survive the window being mapped: apply the verdict again
+      if (visible !== lastVisible) { lastVisible = visible; mouse.forget(); }
+      if (!visible) { mouse.tick(); return; }
+      const pt = cursor.read(), b = win.getBounds();
       const inside = pt.x >= b.x && pt.x < b.x + b.width && pt.y >= b.y && pt.y < b.y + b.height;
       const at = inside ? { x: pt.x - b.x, y: pt.y - b.y } : null;
-      const key = at ? `${at.x},${at.y}` : '';
-      if (key === last) return;
-      last = key;
       win.webContents.send('pet:cursor', at);
+      mouse.tick();
     }, CURSOR_EVERY_MS);
     // hidden while the setting is on and a window fills the pet's monitor; shown again once neither holds
     const fullscreenTimer = fullscreen && setInterval(() => {
@@ -347,12 +398,12 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true }) {
 
   const openDress = (target = `${origin}/dress`) => {
     if (dress) { dress.show(); dress.focus(); return; }
-    dress = new BrowserWindow({ width: 980, height: 720, title: '桌宠装扮', autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true } });
+    dress = new BrowserWindow({ width: 980, height: 720, title: 'Cortico', autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true } });
     dress.on('closed', () => { dress = null; });
     dress.loadURL(target);
   };
 
-  ipcMain.on('pet:interactive', (_e, on) => { if (win) win.setIgnoreMouseEvents(!on, { forward: true }); });
+  ipcMain.on('pet:interactive', (_e, on) => mouse.ask(on));
   ipcMain.on('pet:focus', () => {
     if (!win) return;
     // Explicit text input activates this menu-bar process as well as its window.
@@ -378,8 +429,15 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true }) {
     else if (win.isFocused()) win.blur();
   });
   ipcMain.on('pet:hide', () => { releaseAutoHidden(); if (win) win.hide(); });
+  ipcMain.on('pet:overlayFrame', (_e, rect, at) => overlay.frame(rect, at));
   ipcMain.on('pet:hideWhenFullscreen', (_e, on) => { hideWhenFullscreen = !!on; });
   ipcMain.on('pet:openDress', () => openDress());
+  let language = 'zh';
+  ipcMain.on('pet:language', (_e, code) => {
+    if (typeof code !== 'string' || code === language) return;
+    language = code;
+    void buildTrayMenu();
+  });
   ipcMain.handle('pet:sampleBackdrop', (_e, query) => {
     try { return win ? sampleBackdrop(win, query || {}) : []; } catch { return []; }
   });
@@ -390,7 +448,7 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true }) {
    */
   ipcMain.handle('pet:followCursor', () => {
     if (!win) return null;
-    const pt = screen.getCursorScreenPoint(), d = screen.getDisplayNearestPoint(pt);
+    const pt = cursor.read(), d = screen.getDisplayNearestPoint(pt);
     const fromDisplay = display();
     if (d.id === fromDisplay.id) return null;
     const from = coverArea(fromDisplay), wa = cover(d);
@@ -400,6 +458,8 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true }) {
   // a pet is not an app to switch to
   if (process.platform === 'darwin') app.dock?.hide();
   app.whenReady().then(async () => {
+    cursor = createCursorSource({ screen });
+    app.once('will-quit', () => cursor.close());
     // macOS asks once, before the page first opens the microphone
     if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('microphone') === 'not-determined') {
       await systemPreferences.askForMediaAccess('microphone').catch(() => false);
@@ -414,16 +474,24 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true }) {
     screen.on('display-removed', place);
     if (!withTray) return;
     tray = new Tray(trayIcon());
-    tray.setToolTip('Cortico 桌宠');
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '显示桌宠', click: () => { releaseAutoHidden(); if (!win) create(); else win.showInactive(); } },
-      { label: '隐藏桌宠', click: () => { releaseAutoHidden(); if (win) win.hide(); } },
-      { label: '装扮…', click: () => openDress() },
-      { type: 'separator' },
-      { label: '关闭桌宠窗口', click: () => app.quit() },
-    ]));
+    await buildTrayMenu();
     tray.on('click', () => { if (win) { releaseAutoHidden(); (win.isVisible() ? win.hide() : win.showInactive()); } });
   });
+  /** The tray's tooltip and menu in the language the page last reported. */
+  async function buildTrayMenu() {
+    if (!tray) return;
+    const want = language, t = await pageText(want);
+    if (want !== language || !tray) return;
+    tray.setToolTip(t['pet.title']);
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: t['host.show'], click: () => { releaseAutoHidden(); if (!win) create(); else win.showInactive(); } },
+      { label: t['host.hide'], click: () => { releaseAutoHidden(); if (win) win.hide(); } },
+      { label: t['host.dress'], click: () => openDress() },
+      { type: 'separator' },
+      { label: t['host.close'], click: () => app.quit() },
+    ]));
+  }
+
   app.on('window-all-closed', () => { if (!tray) app.quit(); });
   // with --parent-pid the window closes once that process is gone
   if (parentPid) {

@@ -1,13 +1,19 @@
 /** Config section `worlds.desktop-pet`, its defaults and the console config groups. */
 import type { ConfigGroup } from 'cortico/core/config-schema.ts';
+import type { Language } from 'cortico/core/language.ts';
 import type { WorldSection } from 'cortico/world.ts';
 import type { SegmentConfig } from './asr/segmenter.ts';
 import { DEFAULT_HOTKEY } from './asr/hotkey.ts';
+import { capFor, petText } from './i18n/index.ts';
+import { CUA_DEFAULTS, cuaConfigGroup, type CuaConfig } from './cua/config.ts';
 
 export const DESKTOP_PET_ID = 'desktop-pet';
 
-/** What the pet's menu offers, in its order; any of them can also show as a button beside the pet on hover. */
-export const PET_ACTIONS = ['chat', 'voice', 'roam', 'theme', 'sound', 'dress', 'hide'] as const;
+/** Longest name for the person, in characters as seen, for Chinese, Japanese and Korean (`capFor` doubles it elsewhere). */
+export const USER_MAX = 20;
+
+/** What the pet's menu offers, in its order, all but `roam`; any of them can also show as a button beside the pet on hover. */
+export const PET_ACTIONS = ['chat', 'voice', 'roam', 'theme', 'sound', 'hide', 'dress'] as const;
 export type PetAction = typeof PET_ACTIONS[number];
 /** Most hover buttons. */
 export const MAX_HOVER_BUTTONS = 6;
@@ -50,17 +56,75 @@ export type SoundSettings = Record<SoundKind, boolean> & {
 export type RoamMode = 'free' | 'calm' | 'off';
 /** Which side of each palette the pet pages draw: dark = light figure for dark surroundings. */
 export type PetTheme = 'dark' | 'light';
-/** Which touches wake the bot: poke = clicks only, petting and carrying wait for the next wake; all; none = every touch waits. */
-export type TouchWake = 'poke' | 'all' | 'none';
+/**
+ * Which touches wake the bot: poke = clicks only, petting and carrying wait for the next wake; all; none = every touch
+ * waits; custom = the kinds in `touch.wakeKinds`.
+ */
+export type TouchWake = 'poke' | 'all' | 'none' | 'custom';
+/** Touches `touch.wakeKinds` can pick, as the pet page names them; a crash counts as the throw or drop it ended. */
+export const TOUCH_KINDS = ['poke', 'pet', 'throw', 'drop'] as const;
+export type TouchKind = typeof TOUCH_KINDS[number];
+
+/** Whether a touch of `kind` wakes the bot by itself under these settings. */
+export function touchWakes(touch: { wakeOn: TouchWake; wakeKinds?: readonly string[] }, kind: string): boolean {
+  if (touch.wakeOn === 'all') return true;
+  if (touch.wakeOn === 'poke') return kind === 'poke';
+  return touch.wakeOn === 'custom' && Array.isArray(touch.wakeKinds) && touch.wakeKinds.includes(kind);
+}
+
+/**
+ * What `pet_set` and `pet_quiet` may do: off = nothing; default = the items of SELF_DEFAULT that are true at once, the
+ * rest once the person agrees; any = every item at once; custom = per item, as `selfAdjustCustom` says.
+ */
+export type SelfAdjust = 'off' | 'default' | 'any' | 'custom';
+export const SELF_ADJUST: readonly SelfAdjust[] = ['off', 'default', 'any', 'custom'];
+/** The settings `pet_set` takes, in its order. */
+export const SELF_KEYS = ['figure', 'scheme', 'roam', 'snoreSeconds', 'sound', 'scale', 'theme', 'hoverButtons', 'user'] as const;
+export type SelfKey = typeof SELF_KEYS[number];
+/** Per item, whether the bot changes it at once (true) or asks first (false), under `default`. */
+export const SELF_DEFAULT: Readonly<Record<SelfKey, boolean>> = {
+  figure: true, scheme: true, roam: true, snoreSeconds: true, sound: false, scale: false, theme: false, hoverButtons: false, user: false,
+};
+
+/** `selfAdjust` as it reads: versions up to 0.1.20 wrote true (now `default`) or false (now `off`). */
+export function selfAdjustMode(value: unknown): SelfAdjust {
+  if (value === false) return 'off';
+  return SELF_ADJUST.includes(value as SelfAdjust) ? value as SelfAdjust : 'default';
+}
+
+/** Per item, whether the bot may change it at once under these settings; all false when it may change nothing. */
+export function directSettings(cfg: { selfAdjust: unknown; selfAdjustCustom?: Partial<Record<SelfKey, unknown>> }): Record<SelfKey, boolean> {
+  const mode = selfAdjustMode(cfg.selfAdjust);
+  return Object.fromEntries(SELF_KEYS.map((k) => [k,
+    mode === 'any' || (mode === 'default' && SELF_DEFAULT[k])
+    || (mode === 'custom' && (typeof cfg.selfAdjustCustom?.[k] === 'boolean' ? cfg.selfAdjustCustom[k] === true : SELF_DEFAULT[k]))])) as Record<SelfKey, boolean>;
+}
 /** hold: listen while the talk key is held; toggle: each press starts or stops listening; always: listen all the time. */
 export type MicMode = 'hold' | 'toggle' | 'always';
-/** funasr: FunASR's SenseVoiceSmall in this process (one model download, every platform); system: the recognizer Windows ships (nothing to download, less accurate). */
-export type AsrEngine = 'funasr' | 'system';
+/**
+ * funasr: FunASR's SenseVoiceSmall; whisper: OpenAI's Whisper small (both in this process, one model
+ * download each, every platform); system: the recognizer Windows ships (nothing to download, less accurate).
+ */
+export type AsrEngine = 'funasr' | 'whisper' | 'system';
+
+/** Languages SenseVoiceSmall hears, by the app language that speaks them; it also takes `yue` and `auto`. */
+export const SENSEVOICE_LANGUAGES: Readonly<Record<string, string>> = { zh: 'zh', 'zh-Hant': 'zh', en: 'en', ja: 'ja', ko: 'ko' };
+
+/**
+ * The engine for an `asr.engine` setting and an app language. Empty, or a value this version does
+ * not take, the app language picks: FunASR for a language SenseVoice hears, Whisper for the rest.
+ * `system` holds only where Windows' recognizer exists (`systemSupported`).
+ */
+export function asrEngineFor(setting: string, language: string, systemSupported: boolean): AsrEngine {
+  const byLanguage: AsrEngine = language in SENSEVOICE_LANGUAGES ? 'funasr' : 'whisper';
+  if (setting === 'funasr' || setting === 'whisper') return setting;
+  return setting === 'system' && systemSupported ? 'system' : byLanguage;
+}
 
 export interface DesktopPetConfigSection extends WorldSection {
   /** Local server for the pet page, the dressing page and the pet window's socket. */
   port: number;
-  /** How events name the person at the computer. */
+  /** How events name the person at the computer; empty: the app language's default name (`defaultUser` in src/i18n). */
   user: string;
   window: {
     /** Open the pet window when the World starts. */
@@ -69,10 +133,16 @@ export interface DesktopPetConfigSection extends WorldSection {
     electronFile: string;
     /** Figure size on screen, 1 = 256 logo units drawn at 107 px. */
     scale: number;
+    /** How far the light halo reaches out from the body, in pixels (its outer blur); 0 turns it off. */
+    glow: number;
     /** The pet page draws 60 frames a second at rest too; off, it drops to 30 while the body stands, sits or sleeps. */
+    /** Frames a second while the body moves (and at rest with `lockFrameRate`); 0 follows the display. */
+    frameRate: number;
     lockFrameRate: boolean;
     /** Hide the pet window while a fullscreen window covers the display it is on. */
     hideWhenFullscreen: boolean;
+    /** Serve `/overlay`, the pet window's picture for an OBS browser source. */
+    exportOverlay: boolean;
   };
   roam: RoamMode;
   /** All of the pet's sounds; `sounds` picks among them while this is on. */
@@ -103,21 +173,31 @@ export interface DesktopPetConfigSection extends WorldSection {
   hoverButtons: string;
   /** Double-clicking the pet opens the typing box. */
   doubleClickChat: boolean;
-  /** The bot may change its own looks and habits (src/self.ts), and asks before the rest. */
-  selfAdjust: boolean;
+  /** Show the current activity above the pet, including file names. */
+  statusBubble: boolean;
+  /** How far the bot may change its own looks and habits (src/self.ts); read through `selfAdjustMode`. */
+  selfAdjust: SelfAdjust;
+  /** Under `custom`: per item, true = changed at once, false = asked first. */
+  selfAdjustCustom: Record<SelfKey, boolean>;
   skin: PetSkin;
+  /** Computer use (src/cua/). */
+  cua: CuaConfig;
   touch: {
     /** Clicks, petting and throws become events. */
     enabled: boolean;
     wakeOn: TouchWake;
+    /** Under `custom`: the touches that wake the bot. */
+    wakeKinds: TouchKind[];
   };
   asr: {
     enabled: boolean;
-    /** Earlier versions wrote `auto` or `whisper` here; both now mean funasr. */
-    engine: AsrEngine;
+    /** Empty: by the app language (`asrEngineFor`). Earlier versions wrote `auto` here, which reads as empty. */
+    engine: AsrEngine | '';
+    /** An ISO 639-1 code or `auto`; empty follows the app language. FunASR and Whisper read a code they do not take as `auto`. */
     language: string;
-    /** CPU threads for one FunASR decode; 0 = two. */
+    /** CPU threads for one FunASR or Whisper decode; 0 = two. */
     threads: number;
+    /** Traditional characters heard become Simplified, while the app language is `zh`. */
     simplified: boolean;
     timeoutMs: number;
     segment: SegmentConfig;
@@ -131,30 +211,38 @@ export interface DesktopPetConfigSection extends WorldSection {
   };
 }
 
+/** The pet's size range on screen. */
+export const SCALE_MIN = .5, SCALE_MAX = 10;
+/** The halo's reach in pixels: 0 is off; past GLOW_MAX it reads as a gray cloud rather than an outline. */
+export const GLOW_MAX = 16, GLOW_DEFAULT = 7;
+
 export const DESKTOP_PET_DEFAULTS: DesktopPetConfigSection = {
   enabled: false,
   port: 7797,
-  user: '伙伴',
-  window: { enabled: true, electronFile: '', scale: 1, lockFrameRate: false, hideWhenFullscreen: false },
+  user: '',
+  window: { enabled: true, electronFile: '', scale: 1, glow: GLOW_DEFAULT, frameRate: 60, lockFrameRate: false, hideWhenFullscreen: false, exportOverlay: false },
   roam: 'calm',
   sound: true,
   sounds: { move: true, touch: true, face: true, snore: true, talk: true, ui: true, snoreSeconds: 0 },
-  toy: { enabled: true, sound: true, name: '铁盆' },
+  toy: { enabled: true, sound: true, name: '' },
   theme: 'dark',
   rememberPosition: false,
   petX: null,
   hoverButtons: 'chat,voice',
   doubleClickChat: false,
-  selfAdjust: true,
+  statusBubble: true,
+  selfAdjust: 'default',
+  selfAdjustCustom: { ...SELF_DEFAULT },
   skin: {
     figure: 'coo', scheme: 'deepseek', palette: 'mint', head: 'none', side: 'none', glasses: 'none', neck: 'none',
     colors: { head: { main: 'body', acc: 'eye' }, side: { main: 'eye', acc: 'eye' }, glasses: { main: 'body', acc: 'eye' }, neck: { main: 'eye', acc: 'eye' } },
   },
-  touch: { enabled: true, wakeOn: 'poke' },
+  cua: CUA_DEFAULTS,
+  touch: { enabled: true, wakeOn: 'poke', wakeKinds: ['poke'] },
   asr: {
     enabled: true,
-    engine: 'funasr',
-    language: 'zh',
+    engine: '',
+    language: '',
     threads: 0,
     simplified: true,
     timeoutMs: 20_000,
@@ -165,72 +253,78 @@ export const DESKTOP_PET_DEFAULTS: DesktopPetConfigSection = {
 
 const K = `worlds.${DESKTOP_PET_ID}`;
 
-export const DESKTOP_PET_CONFIG_GROUP: ConfigGroup = {
-  id: `world:${DESKTOP_PET_ID}`,
-  owner: `world:${DESKTOP_PET_ID}`,
-  schema: {
-    type: 'object',
-    title: '桌宠',
-    properties: {
-      [`${K}.user`]: { type: 'string', title: '怎么称呼你', description: '语音、打字和互动事件里用这个名字指代你。', 'x-hot': true },
-      [`${K}.roam`]: { type: 'string', title: '行为模式', enum: ['free', 'calm', 'off'], description: 'free 常走动;calm 多待着;off 只做被要求的动作。', 'x-hot': true },
-      [`${K}.theme`]: { type: 'string', title: '黑白模式', enum: ['dark', 'light'], description: 'dark 夜间:浅色身体、深色气泡;light 白天:深色身体、浅色气泡。', 'x-hot': true },
-      [`${K}.rememberPosition`]: { type: 'boolean', title: '记住位置', description: '退出时记下桌宠的横向位置,下次启动落回那里;有多块屏幕时总在主屏上启动。', 'x-hot': true },
-      [`${K}.hoverButtons`]: { type: 'string', title: '悬停按钮', description: `鼠标停在桌宠身上时旁边出现的按钮,最多 ${MAX_HOVER_BUTTONS} 个,逗号分隔:${PET_ACTIONS.join(', ')}。`, 'x-hot': true },
-      [`${K}.doubleClickChat`]: { type: 'boolean', title: '双击打字', description: '双击桌宠打开打字框。', 'x-hot': true },
-      [`${K}.selfAdjust`]: { type: 'boolean', title: '允许自己调整', description: '桌宠可以自己换形象和装扮、改走动和呼噜;改音效、大小、黑白模式、悬停按钮和对你的称呼前先问你。关掉后这些它都改不了。', 'x-hot': true },
-      [`${K}.toy.enabled`]: { type: 'boolean', title: '玩具', description: '舞台地面上放一件玩具:可以拎起来甩,桌宠路过顺脚踢飞、隔一阵自己走过去踢,被砸到会有反应。样子和名字在「装扮」页里换。关掉后它从舞台上收走。', 'x-hot': true },
-      [`${K}.toy.sound`]: { type: 'boolean', title: '玩具的响声', description: '玩具被踢、被拎起、落地和撞墙的响声。总音效关掉时它也跟着没声。', 'x-hot': true },
-      [`${K}.toy.name`]: { type: 'string', title: '玩具的名字', description: '桌宠提到它时用的名字,默认「铁盆」。改它立刻生效,不用重开对话。', 'x-hot': true },
-      [`${K}.window.enabled`]: { type: 'boolean', title: '启动时打开桌宠窗口', 'x-hot': false },
-      [`${K}.window.scale`]: { type: 'number', title: '大小', minimum: .5, maximum: 2, multipleOf: .05, 'x-hot': true },
-      [`${K}.window.lockFrameRate`]: { type: 'boolean', title: '锁定 60 帧', description: '一直按每秒 60 帧画桌宠。关着时站着、坐着、睡着降到每秒 30 帧,走动、被拎着、跳起时仍是 60 帧。', 'x-hot': true },
-      // 只有 Windows 的窗口进程判得出别的程序全屏(host/electron-main.cjs 的 fullscreen);不注册时「习惯」页也不显示
-      ...(process.platform === 'win32' ? {
-        [`${K}.window.hideWhenFullscreen`]: { type: 'boolean', title: '全屏时自动隐藏', description: '开着时,前台窗口全屏铺满桌宠所在的那块屏(游戏、全屏视频、浏览器全屏)就把它藏起来,退出全屏放回来;最大化的窗口不算。关着时一直浮在上面。', 'x-hot': true },
-      } : {}),
-      [`${K}.window.electronFile`]: { type: 'string', title: 'Electron 程序', description: '留空时依次用 CORTICO_DESKTOP_PET_HOST 和面板里安装的运行时。', 'x-path': { kind: 'file' }, 'x-hot': false },
-      [`${K}.port`]: { type: 'integer', title: '页面端口', minimum: 1024, maximum: 65535, description: '被占用时向上顺延。', 'x-hot': false },
-      [`${K}.touch.enabled`]: { type: 'boolean', title: '互动发成事件', description: '戳、摸、拎起来甩出去。', 'x-hot': true },
-      [`${K}.touch.wakeOn`]: { type: 'string', title: '哪些互动单独唤醒', enum: ['poke', 'all', 'none'], description: 'poke 只有点一下唤醒,摸头和拎起来跟着下一次唤醒一起送;all 都唤醒;none 都跟着下一次唤醒送。一次互动唤醒之后、这一轮结束之前的互动,都跟着下一次唤醒送。', 'x-hot': true },
+/** The console's config groups: the pet's own, its sounds and voice input, titled in `language` (the console's). */
+export function desktopPetConfigGroups(language: Language = 'zh'): ConfigGroup[] {
+  const texts = petText(language);
+  const c = texts.config;
+  const userMax = capFor(USER_MAX, language);
+  const pet: ConfigGroup = {
+    id: `world:${DESKTOP_PET_ID}`,
+    owner: `world:${DESKTOP_PET_ID}`,
+    schema: {
+      type: 'object',
+      title: c.group,
+      properties: {
+        [`${K}.user`]: { type: 'string', title: c.user.title, description: c.user.description(userMax), 'x-hot': true },
+        [`${K}.roam`]: { type: 'string', title: c.roam.title, enum: ['free', 'calm', 'off'], description: c.roam.description, 'x-hot': true },
+        [`${K}.theme`]: { type: 'string', title: c.theme.title, enum: ['dark', 'light'], description: c.theme.description, 'x-hot': true },
+        [`${K}.rememberPosition`]: { type: 'boolean', title: c.rememberPosition.title, description: c.rememberPosition.description, 'x-hot': true },
+        [`${K}.hoverButtons`]: { type: 'string', title: c.hoverButtons.title, description: c.hoverButtons.description(MAX_HOVER_BUTTONS, PET_ACTIONS.join(', ')), 'x-hot': true },
+        [`${K}.doubleClickChat`]: { type: 'boolean', title: c.doubleClickChat.title, description: c.doubleClickChat.description, 'x-hot': true },
+        [`${K}.statusBubble`]: { type: 'boolean', title: c.statusBubble.title, description: c.statusBubble.description, 'x-hot': true },
+        [`${K}.selfAdjust`]: { type: 'string', title: c.selfAdjust.title, enum: [...SELF_ADJUST], description: c.selfAdjust.description, 'x-hot': true },
+        [`${K}.toy.enabled`]: { type: 'boolean', title: c.toyEnabled.title, description: c.toyEnabled.description, 'x-hot': true },
+        [`${K}.toy.sound`]: { type: 'boolean', title: c.toySound.title, description: c.toySound.description, 'x-hot': true },
+        [`${K}.toy.name`]: { type: 'string', title: c.toyName.title, description: c.toyName.description(texts.defaultToy), 'x-hot': true },
+        [`${K}.window.enabled`]: { type: 'boolean', title: c.windowEnabled.title, 'x-hot': false },
+        [`${K}.window.scale`]: { type: 'number', title: c.scale.title, minimum: SCALE_MIN, maximum: SCALE_MAX, multipleOf: .05, 'x-hot': true },
+        [`${K}.window.glow`]: { type: 'number', title: c.glow.title, description: c.glow.description, minimum: 0, maximum: GLOW_MAX, multipleOf: 1, 'x-hot': true },
+        [`${K}.window.frameRate`]: { type: 'integer', title: c.frameRate.title, minimum: 0, description: c.frameRate.description, 'x-hot': true },
+        [`${K}.window.lockFrameRate`]: { type: 'boolean', title: c.lockFrameRate.title, description: c.lockFrameRate.description, 'x-hot': true },
+        // only the window process on Windows can tell another program is full screen (host/electron-main.cjs `fullscreen`); unregistered, the 「习惯」 page hides it too
+        ...(process.platform === 'win32' ? {
+          [`${K}.window.hideWhenFullscreen`]: { type: 'boolean', title: c.hideWhenFullscreen.title, description: c.hideWhenFullscreen.description, 'x-hot': true },
+        } : {}),
+        [`${K}.window.exportOverlay`]: { type: 'boolean', title: c.exportOverlay.title, description: c.exportOverlay.description, 'x-hot': true },
+        [`${K}.window.electronFile`]: { type: 'string', title: c.electronFile.title, description: c.electronFile.description, 'x-path': { kind: 'file' }, 'x-hot': false },
+        [`${K}.port`]: { type: 'integer', title: c.port.title, minimum: 1024, maximum: 65535, description: c.port.description, 'x-hot': false },
+        [`${K}.touch.enabled`]: { type: 'boolean', title: c.touchEnabled.title, description: c.touchEnabled.description, 'x-hot': true },
+        [`${K}.touch.wakeOn`]: { type: 'string', title: c.touchWakeOn.title, enum: ['none', 'poke', 'all', 'custom'], description: c.touchWakeOn.description, 'x-hot': true },
+      },
     },
-  },
-};
-
-export const DESKTOP_PET_SOUND_CONFIG_GROUP: ConfigGroup = {
-  id: `world:${DESKTOP_PET_ID}:sound`,
-  owner: `world:${DESKTOP_PET_ID}`,
-  schema: {
-    type: 'object',
-    title: '音效',
-    properties: {
-      [`${K}.sound`]: { type: 'boolean', title: '音效总开关', description: '桌宠菜单里的音效按钮切的就是这个。', 'x-hot': true },
-      [`${K}.sounds.move`]: { type: 'boolean', title: '动作', description: '走路、跑、跳、落地、被甩出去、点头、摇头、转圈、晕、发抖、跳舞、张望。', 'x-hot': true },
-      [`${K}.sounds.touch`]: { type: 'boolean', title: '互动', description: '被拎起来、拎着晃、被摸、被戳。', 'x-hot': true },
-      [`${K}.sounds.face`]: { type: 'boolean', title: '表情', description: '开心、眨眼、喜欢、惊讶、生气、难过、害羞、打哈欠。', 'x-hot': true },
-      [`${K}.sounds.snore`]: { type: 'boolean', title: '打呼噜', 'x-hot': true },
-      [`${K}.sounds.snoreSeconds`]: { type: 'integer', title: '呼噜打多久', minimum: 0, maximum: 3600, 'x-suffix': '秒', description: '每次睡着后打这么久呼噜就安静下来,Z 照样飘;0 = 一直打到醒。', 'x-hot': true },
-      [`${K}.sounds.talk`]: { type: 'boolean', title: '说话', description: '气泡里逐字冒出的叽咕声、选项卡片弹出的声音。', 'x-hot': true },
-      [`${K}.sounds.ui`]: { type: 'boolean', title: '按钮与提示', description: '点按钮、气泡弹出、选中、开始和结束听你说话。', 'x-hot': true },
+  };
+  const sound: ConfigGroup = {
+    id: `world:${DESKTOP_PET_ID}:sound`,
+    owner: `world:${DESKTOP_PET_ID}`,
+    schema: {
+      type: 'object',
+      title: c.soundGroup,
+      properties: {
+        [`${K}.sound`]: { type: 'boolean', title: c.sound.title, description: c.sound.description, 'x-hot': true },
+        ...Object.fromEntries(SOUND_KINDS.map((kind) => [`${K}.sounds.${kind}`, {
+          type: 'boolean' as const, title: c.sounds[kind].title, ...(c.sounds[kind].description ? { description: c.sounds[kind].description } : {}), 'x-hot': true,
+        }])),
+        [`${K}.sounds.snoreSeconds`]: { type: 'integer', title: c.snoreSeconds.title, minimum: 0, maximum: 3600, 'x-suffix': c.snoreSeconds.suffix, description: c.snoreSeconds.description, 'x-hot': true },
+      },
     },
-  },
-};
-
-export const DESKTOP_PET_ASR_CONFIG_GROUP: ConfigGroup = {
-  id: `world:${DESKTOP_PET_ID}:asr`,
-  owner: `world:${DESKTOP_PET_ID}`,
-  schema: {
-    type: 'object',
-    title: '语音输入',
-    properties: {
-      [`${K}.asr.enabled`]: { type: 'boolean', title: '语音输入总开关', 'x-hot': true },
-      [`${K}.asr.engine`]: { type: 'string', title: '识别引擎', enum: ['funasr', 'system'], description: 'funasr 用 FunASR 的 SenseVoiceSmall,在本机识别,中文准,首次要下载约 240 MB 的模型;system 用 Windows 自带的语音识别,不用下载,准确度低一些(只在 Windows 上有)。', 'x-hot': true },
-      [`${K}.asr.language`]: { type: 'string', title: '语言', description: 'zh、en、ja、ko、yue,或 auto 让模型自己判断。', 'x-hot': true },
-      [`${K}.asr.threads`]: { type: 'integer', title: 'CPU 线程', minimum: 0, maximum: 16, description: 'FunASR 一次识别用几个线程,0 = 2。', 'x-hot': true },
-      [`${K}.asr.simplified`]: { type: 'boolean', title: '转成简体', 'x-hot': true },
-      [`${K}.asr.segment.thresholdDb`]: { type: 'number', title: '说话门槛', minimum: -80, maximum: 0, 'x-suffix': 'dBFS', 'x-hot': true },
-      [`${K}.asr.segment.silenceMs`]: { type: 'integer', title: '一句结束的静音', minimum: 200, maximum: 5000, 'x-suffix': 'ms', 'x-hot': true },
-      [`${K}.asr.segment.maxUtteranceMs`]: { type: 'integer', title: '一句最长', minimum: 2000, maximum: 60000, 'x-suffix': 'ms', 'x-hot': true },
+  };
+  const asr: ConfigGroup = {
+    id: `world:${DESKTOP_PET_ID}:asr`,
+    owner: `world:${DESKTOP_PET_ID}`,
+    schema: {
+      type: 'object',
+      title: c.asrGroup,
+      properties: {
+        [`${K}.asr.enabled`]: { type: 'boolean', title: c.asrEnabled.title, 'x-hot': true },
+        [`${K}.asr.engine`]: { type: 'string', title: c.asrEngine.title, enum: ['', 'funasr', 'whisper', 'system'], description: c.asrEngine.description, 'x-hot': true },
+        [`${K}.asr.language`]: { type: 'string', title: c.asrLanguage.title, description: c.asrLanguage.description, 'x-hot': true },
+        [`${K}.asr.threads`]: { type: 'integer', title: c.asrThreads.title, minimum: 0, maximum: 16, description: c.asrThreads.description, 'x-hot': true },
+        [`${K}.asr.simplified`]: { type: 'boolean', title: c.asrSimplified.title, description: c.asrSimplified.description, 'x-hot': true },
+        [`${K}.asr.segment.thresholdDb`]: { type: 'number', title: c.thresholdDb.title, minimum: -80, maximum: 0, 'x-suffix': 'dBFS', 'x-hot': true },
+        [`${K}.asr.segment.silenceMs`]: { type: 'integer', title: c.silenceMs.title, minimum: 200, maximum: 5000, 'x-suffix': 'ms', 'x-hot': true },
+        [`${K}.asr.segment.maxUtteranceMs`]: { type: 'integer', title: c.maxUtteranceMs.title, minimum: 2000, maximum: 60000, 'x-suffix': 'ms', 'x-hot': true },
+      },
     },
-  },
-};
+  };
+  return [pet, sound, asr, cuaConfigGroup(language)];
+}

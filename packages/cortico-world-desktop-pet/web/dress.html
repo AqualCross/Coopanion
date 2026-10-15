@@ -3,40 +3,40 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>桌宠装扮</title>
+<title>Cortico</title>
 <link rel="stylesheet" href="/web/pet.css">
 <link rel="stylesheet" href="/web/dress.css">
 </head>
 <body class="dress-page">
 <main>
-  <div class="side">
-    <div class="preview" id="preview" aria-label="预览">
-      <div class="figure-layer" id="figureLayer"></div>
-      <button class="tool mode" id="mode" type="button"></button>
-      <p class="saved" id="saved" aria-live="polite"></p>
-    </div>
-    <div class="toy" id="toyBox">
-      <div class="row-label">玩具</div>
-      <div class="toy-row">
-        <button class="toy-pic" id="toyPic" type="button" title="换一张图"></button>
-        <div class="toy-fields">
-          <label class="toy-name"><span>名字</span><input id="toyName" type="text" maxlength="12" autocomplete="off" spellcheck="false"></label>
-          <button class="toy-reset" id="toyReset" type="button" hidden>用回铁盆</button>
-        </div>
-      </div>
-      <p class="toy-hint">挑一张图当它,再给它起个名字;它在屏幕上照样能被踢、被拎起来甩。</p>
-      <input id="toyFile" type="file" accept="image/*" hidden>
-    </div>
+  <div class="preview" id="preview" data-i18n-label="dress.preview">
+    <div class="floor" id="floor" aria-hidden="true"></div>
+    <div class="figure-layer" id="figureLayer"></div>
+    <p class="saved" id="saved" aria-live="polite"></p>
   </div>
   <div class="dress" id="dress">
-    <div class="row-label" id="lbFigure">形象</div><div class="slot" id="optFigure" role="group" aria-labelledby="lbFigure"></div>
-    <div class="row-label coo-only" id="lbPalette">配色</div><div class="slot coo-only" id="optPalette" role="group" aria-labelledby="lbPalette"></div>
-    <div class="row-label coo-only" id="lbHead">头顶</div><div class="slot coo-only" id="optHead" role="group" aria-labelledby="lbHead"></div>
-    <div class="row-label coo-only" id="lbSide">配件</div><div class="slot coo-only" id="optSide" role="group" aria-labelledby="lbSide"></div>
-    <div class="row-label coo-only" id="lbGlasses">眼镜</div><div class="slot coo-only" id="optGlasses" role="group" aria-labelledby="lbGlasses"></div>
-    <div class="row-label coo-only" id="lbNeck">颈饰</div><div class="slot coo-only" id="optNeck" role="group" aria-labelledby="lbNeck"></div>
+    <div class="row-label" id="lbFigure" data-i18n="dress.figure"></div><div class="slot" id="optFigure" role="group" aria-labelledby="lbFigure"></div>
+    <div class="row-label coo-only" id="lbPalette" data-i18n="dress.palette"></div><div class="slot coo-only" id="optPalette" role="group" aria-labelledby="lbPalette"></div>
+    <div class="row-label coo-only" id="lbHead" data-i18n="dress.head"></div><div class="slot coo-only" id="optHead" role="group" aria-labelledby="lbHead"></div>
+    <div class="row-label coo-only" id="lbSide" data-i18n="dress.side"></div><div class="slot coo-only" id="optSide" role="group" aria-labelledby="lbSide"></div>
+    <div class="row-label coo-only" id="lbGlasses" data-i18n="dress.glasses"></div><div class="slot coo-only" id="optGlasses" role="group" aria-labelledby="lbGlasses"></div>
+    <div class="row-label coo-only" id="lbNeck" data-i18n="dress.neck"></div><div class="slot coo-only" id="optNeck" role="group" aria-labelledby="lbNeck"></div>
+    <div class="row-label" id="lbToy" data-i18n="dress.toy"></div>
+    <div class="slot toy-slot" id="optToy" role="group" aria-labelledby="lbToy">
+      <button class="toy-pic" id="toyPic" type="button" data-i18n-title="dress.toyPicture"></button>
+      <div class="toy-fields">
+        <label class="toy-name"><span data-i18n="dress.toyName"></span><input id="toyName" type="text" maxlength="12" autocomplete="off" spellcheck="false"></label>
+        <button class="toy-reset" id="toyReset" type="button" hidden data-i18n="dress.toyReset"></button>
+      </div>
+      <p class="toy-hint" data-i18n="dress.toyHint"></p>
+    </div>
   </div>
 </main>
+<input type="file" id="toyFile" accept="image/*" hidden>
+<input type="file" id="importZip" accept=".zip,application/zip" hidden>
+<input type="file" id="importDir" webkitdirectory hidden>
+<div class="drop-hint" id="dropHint" hidden><p data-i18n="dress.dropHint"></p></div>
+<dialog class="import" id="importDialog" aria-labelledby="importTitle"></dialog>
 <script type="module" src="/web/dress.js"></script>
 </body>
 </html>

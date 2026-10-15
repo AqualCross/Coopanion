@@ -1,8 +1,13 @@
 import { join } from 'node:path';
+import type { Language } from 'cortico/core/language.ts';
 import { runtimesRoot, modelsRoot } from 'cortico/paths.ts';
 import type { WorldDefinition } from 'cortico/world.ts';
 import { DESKTOP_PET_DEFAULTS, DESKTOP_PET_ID, type DesktopPetConfigSection, type PetSkin } from './config.ts';
 import { DesktopPetWorld, modelsDirFor, type PetBotControls } from './world.ts';
+import type { DescribeTool } from './status.ts';
+import type { ModelLanguage } from './model-text.ts';
+import type { Answer } from './cua/engine-ipc.ts';
+import { petText } from './i18n/index.ts';
 
 /** The console keeps the bot's avatar here, in the deployment directory. */
 const AVATAR_FILE = 'avatar.png';
@@ -20,13 +25,24 @@ export interface DesktopPetAssembly {
   packRoots?(): string[];
   /** Called after the bot changed its own settings (`pet_set`). */
   onBotChange?(): void;
+  /** What the status bubble shows for a tool call; see `DescribeTool`. */
+  describeTool?: DescribeTool;
+  /** The language of what the bot reads from this World, read at each use; Chinese when absent. */
+  modelLanguage?(): ModelLanguage;
+  /** The language the bot is to talk to the person in; see `DesktopPetWorldOptions.replyLanguage`. */
+  replyLanguage?(): string | null;
+  /** The app language, what the person reads; see `DesktopPetWorldOptions.language`. */
+  language?(): Language;
+  /** Called with each answer to computer use's question in the pet's bubble. */
+  onCuaAnswer?(answer: Answer): void;
 }
 
 /** The definition, with what an embedding app lends the World. */
 export function desktopPetDefinition(assembly: DesktopPetAssembly = {}): WorldDefinition<DesktopPetConfigSection> {
   return {
     id: DESKTOP_PET_ID,
-    label: '桌宠',
+    // read when Core assembles the Worlds, in the app language of that moment
+    get label() { return petText(assembly.language?.()).console.label; },
     defaults: () => structuredClone(DESKTOP_PET_DEFAULTS),
     // ctx.cfg is the live `worlds.desktop-pet` section: hot keys are read at use
     create: (ctx) => {
@@ -45,7 +61,13 @@ export function desktopPetDefinition(assembly: DesktopPetAssembly = {}): WorldDe
         toyFile: join(ctx.botDir, TOY_FILE),
         controls: assembly.controls,
         packRoots: () => [join(ctx.dataDir, 'figures'), ...assembly.packRoots?.() ?? []],
+        packDir: () => join(ctx.dataDir, 'figures'),
         onBotChange: () => assembly.onBotChange?.(),
+        describeTool: assembly.describeTool,
+        modelLanguage: () => assembly.modelLanguage?.() ?? 'zh',
+        replyLanguage: () => assembly.replyLanguage?.() ?? null,
+        language: () => assembly.language?.() ?? 'zh',
+        onCuaAnswer: (answer) => assembly.onCuaAnswer?.(answer),
       });
       assembly.onCreate?.(world);
       return world;

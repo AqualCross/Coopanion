@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createPet, FACES, KIT_EXPRESSIONS, KIT_MOTIONS, STAND } from '../packages/cortico-world-desktop-pet/web/kit/body.js';
 import { cooFigure, defaultSkin, figure } from '../packages/cortico-world-desktop-pet/web/coo/coo.js';
 import { createSfx } from '../packages/cortico-world-desktop-pet/web/sound.js';
-import { readLayout, touchGate } from '../packages/cortico-world-desktop-pet/web/body-host.js';
+import { haloRect, readLayout, touchGate } from '../packages/cortico-world-desktop-pet/web/body-host.js';
 
 const PKG = new URL('../packages/cortico-world-desktop-pet/', import.meta.url);
 const vocabOf = (pack) => JSON.parse(readFileSync(new URL(`web/${pack}/figure.json`, PKG), 'utf8')).vocab;
@@ -27,6 +27,22 @@ describe('the words the model can use', () => {
     }
   });
 
+  it('automatic thinking drops the thought trail only while the page shows the thought, and explicit thinking keeps the rings', () => {
+    const pet = barePet(), frames = [];
+    pet.setFigure({ draw: (g, face, o) => frames.push({ face, name: o.face }) });
+    run(pet, 1);
+    pet.setThinking(true);
+    run(pet, .2);
+    expect(frames.at(-1)).toMatchObject({ name: 'thinking', face: { think: true } });
+    pet.setThoughtShown(true);
+    run(pet, .2);
+    expect(frames.at(-1)).toMatchObject({ name: 'thinking', face: { think: false } });
+    pet.setThinking(false);
+    pet.doWord('thinking');
+    run(pet, .2);
+    expect(frames.at(-1)).toMatchObject({ name: 'thinking', face: { think: true } });
+  });
+
   it('every expression has a face Coo can draw', () => {
     for (const n of KIT_EXPRESSIONS) {
       const fc = FACES[n].f(.5);
@@ -44,6 +60,16 @@ describe('the words the model can use', () => {
       // everything but sitting and sleeping ends back on its feet
       if (m !== 'sit' && m !== 'sleep' && m !== 'walk' && m !== 'run') expect(pet.pet.mode, m).toBe('idle');
     }
+  });
+
+  it('a frame that took no time leaves the swing a number (#87: the whale lost her hair, tail and skirt for good)', () => {
+    const pet = barePet();
+    run(pet, 1);
+    pet.doWord('sleep');
+    run(pet, 1);
+    pet.step(0);
+    run(pet, 1);
+    expect(Number.isFinite(pet.pet.swing)).toBe(true);
   });
 
   it('a walk asked for as a word reports done once it stops, so the next word need not wait out its seconds', () => {
@@ -129,6 +155,11 @@ describe('what the page holds a pack to', () => {
       sfx.play('boing', 'face'); sfx.play('look', 'move');
       expect(made.clips).toBe(1);
       expect(made.tones).toBeGreaterThan(0);
+      // a hidden window plays nothing, though its page still reads as visible (#136)
+      const before = { ...made };
+      sfx.setShown(false);
+      sfx.play('boing', 'move'); sfx.play('look', 'move'); sfx.pop();
+      expect(made).toEqual(before);
     } finally {
       Object.assign(globalThis, saved);
     }
@@ -143,6 +174,21 @@ describe('what the page holds a pack to', () => {
     expect(l.bubble).toEqual({ x: 0, y: 600 });
   });
 
+  it("the halo blurs only the body's surroundings, not the whole stage (#86: the whale kept a Mac's GPU busy)", () => {
+    const size = { W: 1470, H: 859, S: .42 };
+    const l = readLayout({ box: { x: 970, y: 745, w: 120, h: 114 } }, size);
+    // 40% of the box each side, cut off at the floor
+    expect(haloRect(l, size)).toEqual({ x: 922, y: 699, w: 216, h: 160 });
+    // a small body still gets the drop shadows' full reach, and the rect never leaves the stage
+    expect(haloRect(readLayout({ box: { x: 2, y: 10, w: 20, h: 20 } }, size), size)).toEqual({ x: 0, y: 0, w: 46, h: 54 });
+    expect(haloRect(readLayout({ box: { x: 10, y: 10, w: 0, h: 0 } }, size), size)).toBe(null);
+    expect(haloRect(null, size)).toBe(null);
+    // a wider glow (the 外发光 setting) needs a wider window: three times its reach, at least the default's
+    const small = readLayout({ box: { x: 100, y: 100, w: 20, h: 20 } }, size);
+    expect(haloRect(small, size)).toEqual({ x: 76, y: 76, w: 68, h: 68 });
+    expect(haloRect(small, size, 16)).toEqual({ x: 52, y: 52, w: 116, h: 116 });
+  });
+
   it('a touch counts only right after pointer input, a crash only after a throw', () => {
     const gate = touchGate();
     expect(gate.take('pet', 0)).toBe(false);
@@ -154,5 +200,24 @@ describe('what the page holds a pack to', () => {
     expect(gate.take('throw', 6100)).toBe(true);
     expect(gate.take('crash', 7500)).toBe(true);
     expect(gate.take('crash', 7600)).toBe(false);
+  });
+});
+
+describe('picking the body up', () => {
+  it('a body falling through the air is held as soon as a press lands on it, and falls on when let go of', () => {
+    const pet = barePet(undefined, { enter: 'drop' });
+    run(pet, .25);
+    expect(pet.pet.mode).toBe('air');
+    const { W, H } = pet.bounds;
+    let on = null;
+    for (let y = 0; y < H && !on; y += 4) for (let x = 0; x < W && !on; x += 4) if (pet.hitPet({ x, y })) on = { x, y };
+    expect(pet.pointerDown({ ...on, t: 0 })).toBe(true);
+    expect(pet.pet.mode).toBe('drag');
+    run(pet, 1);
+    expect(pet.pet.mode).toBe('drag');
+    pet.pointerUp({ ...on, t: 1000 });
+    expect(pet.pet.mode).toBe('air');
+    run(pet, 3);
+    expect(['idle', 'look', 'dizzy']).toContain(pet.pet.mode);
   });
 });

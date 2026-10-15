@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { figurePacks, lookOf, lookPatch, readManifest } from '../src/packs.ts';
+import { BUILTIN_PACKS, figurePacks, lookOf, lookPatch, readManifest, scanPacks } from '../src/packs.ts';
 
 function pack(manifest: Record<string, unknown>, files: string[] = []): string {
   const dir = mkdtempSync(join(tmpdir(), 'pack-'));
@@ -26,6 +27,13 @@ describe('figure packs', () => {
     expect(readManifest(pack({ ...base, sounds: { boing: { file: '../boing.ogg', kind: 'move' } } }))).toMatch(/sounds/);
   });
 
+  it('refuses a file path holding markup characters', () => {
+    const markup = 't.png"><iframe src="x.html"></iframe>';
+    expect(readManifest(pack({ ...base, thumb: markup }))).toMatch(/thumb/);
+    const axis = { id: 'tone', name: { zh: '色调' }, options: [{ id: 'day', name: { zh: '白天' }, thumb: markup }] };
+    expect(readManifest(pack({ ...base, axes: [axis] }))).toMatch(/day/);
+  });
+
   it('a built-in id is not taken over by an installed pack, Coo\'s included', () => {
     const root = mkdtempSync(join(tmpdir(), 'packs-'));
     for (const id of ['whale', 'coo']) {
@@ -37,19 +45,53 @@ describe('figure packs', () => {
     expect(problems).toHaveLength(2);
   });
 
+  it('with a built-in pack\'s directory left out of the app, an installed pack with its id loads in its place', () => {
+    const root = mkdtempSync(join(tmpdir(), 'packs-'));
+    mkdirSync(join(root, '3401'));
+    writeFileSync(join(root, '3401', 'figure.json'), JSON.stringify({ ...base, id: 'whale' }));
+    const builtin = BUILTIN_PACKS.map((b) => (b.base === '/web/whale/' ? { ...b, dir: join(root, 'not-shipped') } : b));
+    const { packs, problems } = scanPacks(builtin, [root]);
+    expect(problems).toEqual([]);
+    expect(packs.map((p) => [p.id, p.builtin, p.base])).toEqual([['coo', true, '/web/coo/'], ['whale', false, '/packs/whale/']]);
+  });
+
   it('refuses a word name a script could never write: a marker\'s separator in it, longer than an inline marker, or naming two words', () => {
     expect(readManifest(pack({ ...base, vocab: [{ ...word, names: { zh: ['哔 哔'] } }] }))).toMatch(/名字/);
     expect(readManifest(pack({ ...base, vocab: [{ ...word, names: { zh: ['哔'.repeat(33)] } }] }))).toMatch(/名字/);
     expect(readManifest(pack({ ...base, vocab: [word, { ...word, id: 'boop' }] }))).toMatch(/不止一个词/);
   });
 
-  it('files a pack\'s sound under a body\'s kind only, and leaves out one whose file is not there', () => {
-    expect(readManifest(pack({ ...base, sounds: { boing: { file: 'boing.ogg', kind: 'ui' } } }, ['boing.ogg']))).toMatch(/kind/);
-    const missing: string[] = [];
-    const m = readManifest(pack({ ...base, sounds: { boing: { file: 'boing.ogg', kind: 'move' }, clunk: { file: 'clunk.wav', kind: 'touch' } } }, ['boing.ogg']), false, missing);
+  it('loads a pack without what this version does not know (a sound\'s kind or file type, a word\'s kind) and without a sound file that is not there', () => {
+    const skipped: string[] = [];
+    const m = readManifest(pack({
+      ...base,
+      vocab: [word, { ...word, id: 'pose', kind: 'pose', names: { zh: ['摆姿势'] } }],
+      sounds: {
+        boing: { file: 'boing.ogg', kind: 'move' }, chime: { file: 'chime.ogg', kind: 'ui' },
+        hum: { file: 'hum.flac', kind: 'move' }, clunk: { file: 'clunk.wav', kind: 'touch' },
+      },
+    }, ['boing.ogg', 'chime.ogg', 'hum.flac']), false, skipped);
     if (typeof m === 'string') throw new Error(m);
     expect(Object.keys(m.sounds)).toEqual(['boing']);
-    expect(missing).toHaveLength(1);
+    expect(m.vocab.map((w) => w.id)).toEqual(['beep']);
+    expect(skipped).toHaveLength(4);
+  });
+
+  it('reads the frozen api 2 pack as it was published (tests/fixtures/api2-pack)', () => {
+    const skipped: string[] = [];
+    const m = readManifest(fileURLToPath(new URL('./fixtures/api2-pack/', import.meta.url)), false, skipped);
+    if (typeof m === 'string') throw new Error(m);
+    expect(skipped).toEqual([]);
+    expect(m).toMatchObject({ id: 'fixture-api2', api: 2, entry: 'figure.js', export: 'createFixtureBody', model: 'model.json', thumb: 'thumb.png', can: { walk: true } });
+    expect(m.vocab.map((w) => [w.id, w.kind, w.lasting ?? false])).toEqual([['happy', 'expression', false], ['sit', 'motion', true], ['salute', 'motion', false]]);
+    expect(m.sounds).toEqual({ beep: { file: 'beep.wav', kind: 'touch', volume: .5 } });
+    expect(m.axes.map((a) => [a.id, a.options.map((o) => o.id)])).toEqual([['tone', ['day', 'night']]]);
+    expect(m.presets).toMatchObject([{ id: 'dusk', pick: { tone: 'night' }, accent: '#996633' }]);
+  });
+
+  it('says a pack made for a newer manifest or contract needs the app updated', () => {
+    expect(readManifest(pack({ ...base, manifest: 3 }))).toMatch(/更新应用/);
+    expect(readManifest(pack({ ...base, api: 3 }))).toMatch(/更新应用/);
   });
 
   it('Coo\'s pick is its skin\'s own fields, a pack\'s is the scheme', () => {

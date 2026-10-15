@@ -2,16 +2,19 @@
  * The settings window's colours follow the pet's look. Coo wears Cortico's `mint`; each preset of a
  * figure pack that gives settings-window colours (`presets[].console` in its figure.json, the whale's
  * eight schemes among them) has a console scheme here, written into the deployment's `theme.json` as
- * custom schemes so the appearance page lists them too. The large surfaces stay neutral grey for every scheme; the brand colour goes to the
+ * custom schemes so 「配色方案」 on the 开始 page lists them too. The large surfaces stay neutral grey for every scheme; the brand colour goes to the
  * accent, the timeline's text colours and the charts.
  *
  * The window follows the pet while its scheme is `mint` or one of these. A scheme the person picked
- * on the appearance page, another built-in one or one of their own, stays until they pick one of
- * these again.
+ * under 「配色方案」, another built-in one or one of their own, stays until they pick one of
+ * these again. The schemes are named in the app language when written; an app language change
+ * writes them again.
  */
 import { readDeploymentTheme, writeDeploymentTheme } from 'cortico/web/theme-store.ts';
 import { defaultStoredTheme, normalizeStoredTheme, type ThemePalette, type ThemeScheme } from 'cortico/web/shared/theme.ts';
+import { baseLanguage, type Language } from 'cortico/core/language.ts';
 import type { FigurePack } from 'cortico-world-desktop-pet';
+import { coreText } from './i18n/index.ts';
 
 /** The scheme Coo wears: the app's default (`web.theme` in companion.ts). */
 export const COO_SCHEME = 'mint';
@@ -55,22 +58,25 @@ const palette = (neutral: ThemePalette, h: Hues): ThemePalette => ({
   'chart-output': h.a, 'chart-1': h.a, 'chart-2': h.a2, 'chart-3': h.c3, 'chart-4': h.c4,
 });
 
-const nameZh = (n: Record<string, string> | undefined, fallback: string) => n?.zh ?? (n ? Object.values(n)[0] : undefined) ?? fallback;
+/** A pack's name in `language`, else in its fallback, else the first one given, else `fallback`. */
+const nameIn = (n: Record<string, string> | undefined, fallback: string, language: Language) =>
+  n?.[language] ?? n?.[baseLanguage(language)] ?? (n ? Object.values(n)[0] : undefined) ?? fallback;
 
 /** The whale's ids from before packs (`coo-whale-<scheme>`) stay, so a theme.json written then still matches. */
 const schemeId = (figure: string, preset: string) => (figure === 'whale' ? `coo-whale-${preset}` : `coo-fig-${figure}-${preset}`);
 const isFigureScheme = (id: string) => id.startsWith('coo-whale-') || id.startsWith('coo-fig-');
 
 /** A console scheme for each preset of each pack that gives settings-window colours (`presets[].console`). */
-export function figureSchemes(packs: readonly FigurePack[]): ThemeScheme[] {
+export function figureSchemes(packs: readonly FigurePack[], language: Language = 'zh'): ThemeScheme[] {
+  const t = coreText(language).scheme;
   return packs.flatMap((pack) => {
-    const figure = nameZh(pack.manifest.name, pack.id);
+    const figure = nameIn(pack.manifest.name, pack.id, language);
     return pack.manifest.presets.filter((p) => p.console).map((p) => {
-      const preset = nameZh(p.name, p.id);
+      const preset = nameIn(p.name, p.id, language);
       return {
         id: schemeId(pack.id, p.id),
-        name: `${figure} · ${preset}`,
-        note: `桌宠换成${figure}的「${preset}」时自动换上`,
+        name: t.name(figure, preset),
+        note: t.note(figure, preset),
         palettes: { light: palette(NEUTRAL_LIGHT, p.console!.light), dark: palette(NEUTRAL_DARK, p.console!.dark) },
         custom: true,
       };
@@ -78,25 +84,31 @@ export function figureSchemes(packs: readonly FigurePack[]): ThemeScheme[] {
   });
 }
 
-/** The console scheme for a pet look: Coo's, or the pack preset's (its first with colours for a pick that is not a preset). */
+/**
+ * The console scheme for a pet look: Coo's, or the pack preset's. A pick that is not a preset takes the colours of
+ * the preset with colours that picks the same option on the most axes, the first of them on a tie.
+ */
 export function schemeForSkin(skin: { figure?: string; scheme?: string } | undefined, packs: readonly FigurePack[]): string {
   const pack = packs.find((p) => p.id === skin?.figure);
   const presets = pack?.manifest.presets.filter((p) => p.console) ?? [];
   if (!pack || !presets.length) return COO_SCHEME;
-  return schemeId(pack.id, (presets.find((p) => p.id === skin?.scheme) ?? presets[0]!).id);
+  const picks = String(skin?.scheme ?? '').split('-');
+  const shared = (p: (typeof presets)[number]) => pack.manifest.axes.filter((a, i) => p.pick[a.id] === picks[i]).length;
+  const preset = presets.find((p) => p.id === skin?.scheme) ?? presets.reduce((best, p) => (shared(p) > shared(best) ? p : best));
+  return schemeId(pack.id, preset.id);
 }
 
 /**
  * Brings `<deployDir>/theme.json` in line with the pet's look: the packs' schemes as they are now,
  * and the selection per the rule at the top. Writes only when something changed.
  */
-export function followPetLook(deployDir: string, skin: { figure?: string; scheme?: string } | undefined, packs: readonly FigurePack[]): void {
+export function followPetLook(deployDir: string, skin: { figure?: string; scheme?: string } | undefined, packs: readonly FigurePack[], language: Language = 'zh'): void {
   const state = readDeploymentTheme(deployDir).state ?? { ...defaultStoredTheme(), selectedId: COO_SCHEME };
   const follows = state.selectedId === COO_SCHEME || isFigureScheme(state.selectedId);
   const next = normalizeStoredTheme({
     ...state,
     selectedId: follows ? schemeForSkin(skin, packs) : state.selectedId,
-    custom: [...state.custom.filter((s) => !isFigureScheme(s.id)), ...figureSchemes(packs)],
+    custom: [...state.custom.filter((s) => !isFigureScheme(s.id)), ...figureSchemes(packs, language)],
   });
   if (JSON.stringify(next) !== JSON.stringify(state)) writeDeploymentTheme(deployDir, next);
 }

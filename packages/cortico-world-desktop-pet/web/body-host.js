@@ -16,6 +16,7 @@
  * `onError(err)` is called when the pack's code fails after it was ready; before that the returned
  * promise rejects. Either way the frame is gone.
  */
+import { language, t } from './i18n.js';
 
 /** A pack that has not drawn its first frame by then is taken as broken: its scripts or textures did not load. */
 const READY_MS = 20_000;
@@ -30,6 +31,13 @@ const BOX_MAX = 1.5 * Math.SQRT2;
  */
 const TOUCH_MS = 1000;
 const TOUCHES = new Set(['poke', 'pet', 'grab', 'drop', 'throw', 'crash']);
+/**
+ * How far around the body's box the halo reaches, as a share of the box's width and height each side (the SVG filter
+ * region the halo had before bodies moved into their frame), and at least HALO_REACH pixels, the drop shadows' spread.
+ * Drawn with a CSS filter over the whole stage, the halo blurs the full window on every frame the body redraws: on a
+ * Mac, where it is always on, that kept the GPU busy at 60 to 90 percent behind the whale.
+ */
+const HALO_PAD = .4, HALO_REACH = 24;
 
 const num = (v, fallback = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
 const clampTo = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -61,6 +69,22 @@ export function onBody(layout, p) {
 }
 
 /**
+ * The window the halo is drawn in for a body with `layout` (readLayout's) on a `size` stage: its box with HALO_PAD
+ * around it, and at least HALO_REACH or three times the halo's `reach`, in whole pixels inside the stage; null when
+ * there is no box to draw around.
+ */
+export function haloRect(layout, size, reach = 7) {
+  const b = layout?.box;
+  if (!b || !(b.w > 0) || !(b.h > 0)) return null;
+  // the drop shadows spread about three times their blur: a wider halo needs a wider window
+  const room = Math.max(HALO_REACH, reach * 3);
+  const px = Math.max(room, b.w * HALO_PAD), py = Math.max(room, b.h * HALO_PAD);
+  const x = Math.max(0, Math.floor(b.x - px)), y = Math.max(0, Math.floor(b.y - py));
+  const w = Math.min(Math.ceil(size.W), Math.ceil(b.x + b.w + px)) - x, h = Math.min(Math.ceil(size.H), Math.ceil(b.y + b.h + py)) - y;
+  return w > 0 && h > 0 ? { x, y, w, h } : null;
+}
+
+/**
  * Which touches a body reports are taken: `input(now)` when the page passes it pointer input, `take(kind, now)`
  * for each touch it reports (ms clock).
  */
@@ -78,6 +102,16 @@ export function touchGate() {
 }
 
 /**
+ * `scheme` as `pack` knows it: one of its presets, else each axis's option in it, the axis's first where it names
+ * one the pack does not have (an update of the pack took it away). The pack's own code only ever gets these.
+ */
+export function knownScheme(pack, scheme) {
+  if (pack.presets.some((p) => p.id === scheme)) return scheme;
+  const parts = String(scheme ?? '').split('-');
+  return pack.axes.map((a, i) => (a.options.some((o) => o.id === parts[i]) ? parts[i] : a.options[0].id)).join('-');
+}
+
+/**
  * `pack`: the entry of `/api/figures`; `start`: { x, facing, enter, skin }; `bounds`: { W, H, floorY, S };
  * `theme`: 'dark' | 'light'. Resolves to the body once it is ready.
  */
@@ -89,19 +123,24 @@ export function loadBody({ layer, pack, start, theme, bounds, onEvent, onSound, 
     frame.tabIndex = -1;
     frame.className = 'figure-frame';
     frame.src = '/figure-frame';
+    // the frame's window onto the stage: all of it, or with the halo on, the halo's rect around the body (haloRect)
+    const clip = document.createElement('div');
+    clip.className = 'figure-clip';
+    clip.appendChild(frame);
+    let haloAt = '';
     let ready = false, gone = false, seq = 0, size = bounds;
-    let layout = null, z = null;
+    let layout = null, z = null, words = null;
     const touches = touchGate();
     const waits = new Map();
     const post = (m) => { if (!gone) frame.contentWindow?.postMessage(m, '*'); };
-    const timer = setTimeout(() => fail(new Error(`形象 ${READY_MS / 1000} 秒内没有准备好`)), READY_MS);
+    const timer = setTimeout(() => fail(new Error(t('figure.notReady', { seconds: READY_MS / 1000 }))), READY_MS);
 
     function close() {
       if (gone) return;
       gone = true;
       clearTimeout(timer);
       removeEventListener('message', onMessage);
-      frame.remove();
+      clip.remove();
       for (const done of waits.values()) done();
       waits.clear();
     }
@@ -115,6 +154,8 @@ export function loadBody({ layer, pack, start, theme, bounds, onEvent, onSound, 
       pack: pack.id,
       get layout() { return layout; },
       get z() { return z; },
+      /** The words of the pack's vocabulary its body said it knows, or null when it did not say. */
+      get words() { return words; },
       /** Whether stage point `p` is on the body. */
       hit: (p) => onBody(layout, p),
       tick(dt) { if (ready) post({ t: 'tick', dt }); },
@@ -133,13 +174,25 @@ export function loadBody({ layer, pack, start, theme, bounds, onEvent, onSound, 
       setScheme(id, o = {}) {
         if (gone) return Promise.resolve();
         const s = ++seq;
-        post({ t: 'scheme', id, fade: o.fade ?? 0, at: o.at ?? 0, seq: s });
+        post({ t: 'scheme', id: knownScheme(pack, id), fade: o.fade ?? 0, seq: s });
         return new Promise((done) => waits.set(s, done));
       },
-      /** The light halo behind the body (pet-app's backdrop), as a CSS filter on the frame: 0 removes it. */
-      setHalo(k) {
-        const c = `rgba(184,184,184,${k.toFixed(2)})`;
-        frame.style.filter = k ? `drop-shadow(0 0 3px ${c}) drop-shadow(0 0 7px ${c})` : '';
+      /**
+       * The light halo behind the body (pet-app's backdrop), as a CSS filter on the frame's window cut down to
+       * the body's surroundings (haloRect), so it blurs only those; a `k` or `reach` of 0 removes it. Called once a frame: it follows the body.
+       */
+      setHalo(k, reach) {
+        const r = k && reach > 0 ? haloRect(layout, size, reach) : null;
+        const c = r ? `rgba(184,184,184,${k.toFixed(2)})` : '';
+        // two blurs, the inner one 3/7 of the outer (the halo's look at the default reach of 7)
+        const inner = Math.max(1, Math.round(reach * 3 / 7));
+        const at = r ? `${r.x},${r.y},${r.w},${r.h},${c},${reach}` : '';
+        if (at === haloAt) return;
+        haloAt = at;
+        if (!r) { clip.removeAttribute('style'); frame.removeAttribute('style'); return; }
+        Object.assign(clip.style, { inset: 'auto', left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px`, overflow: 'hidden', filter: `drop-shadow(0 0 ${inner}px ${c}) drop-shadow(0 0 ${reach}px ${c})` });
+        // the frame keeps the stage's size and place, so the body inside it neither moves nor resizes
+        Object.assign(frame.style, { inset: 'auto', left: `${-r.x}px`, top: `${-r.y}px`, width: `${size.W}px`, height: `${size.H}px` });
       },
       dispose: close,
     };
@@ -152,13 +205,16 @@ export function loadBody({ layer, pack, start, theme, bounds, onEvent, onSound, 
           const model = pack.model ? await (await fetch(new URL(pack.base + pack.model, location.href))).json() : null;
           post({
             t: 'init', entry: new URL(pack.base + pack.entry, location.href).href, export: pack.export,
-            base: new URL(pack.base, location.href).href, model, scheme: start.scheme, start: { x: start.x, facing: start.facing, enter: start.enter, skin: start.skin }, theme, bounds: size,
+            base: new URL(pack.base, location.href).href, model, scheme: knownScheme(pack, start.scheme), start: { x: start.x, facing: start.facing, enter: start.enter, skin: start.skin }, theme, bounds: size,
+            language: language(),
           });
         } catch (err) { fail(err); }
       } else if (m.t === 'ready' && !ready) {
         ready = true;
         clearTimeout(timer);
         z = typeof m.z === 'string' ? m.z : null;
+        // only the manifest's words matter, and the list goes on to the World
+        if (Array.isArray(m.words)) words = pack.vocab.map((w) => w.id).filter((id) => m.words.includes(id));
         resolve(body);
       } else if (m.t === 'frame' && ready) {
         layout = readLayout(m.layout, size);
@@ -182,6 +238,6 @@ export function loadBody({ layer, pack, start, theme, bounds, onEvent, onSound, 
       }
     }
     addEventListener('message', onMessage);
-    layer.appendChild(frame);
+    layer.appendChild(clip);
   });
 }

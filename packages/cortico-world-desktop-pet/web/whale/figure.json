@@ -5,11 +5,20 @@
   "version": "1.0.0",
   "name": {
     "zh": "DeepSeek 大肥鱼",
-    "en": "DeepSeek Whale"
+    "zh-Hant": "DeepSeek 大肥魚",
+    "en": "DeepSeek Whale",
+    "ja": "DeepSeek クジラ",
+    "ko": "DeepSeek 고래",
+    "fr": "Baleine DeepSeek",
+    "de": "DeepSeek-Wal",
+    "es-419": "Ballena DeepSeek",
+    "pt-BR": "Baleia DeepSeek",
+    "it": "Balena DeepSeek",
+    "ru": "Кит DeepSeek"
   },
   "about": {
-    "zh": "一个 Q 版鲸鱼女仆,二头身,侧身朝右站;蓝色长发、头顶一根呆毛,头两侧各一只鲸鱼鳍,穿女仆裙和围裙,围裙上印着配色对应厂商的标志,身后一条鲸鱼尾巴",
-    "en": "a chibi whale maid, two heads tall, standing three-quarters on facing right; long blue hair with an ahoge, a whale fin on each side of the head, a maid dress and an apron printed with the logo of the colour scheme's vendor, and a whale tail behind her"
+    "zh": "一个 Q 版鲸鱼娘,二头身,侧身朝右站;蓝色长发、头顶一根呆毛,头两侧各一只鲸鱼鳍,身后一条鲸鱼尾巴;服装是括号里选的那套:女仆装是女仆裙和印着配色对应厂商标志的围裙,冬装是戴鲸鱼兜帽、围条纹围巾的斗篷",
+    "en": "a chibi whale girl, two heads tall, standing three-quarters on facing right; long blue hair with an ahoge, a whale fin on each side of the head, and a whale tail behind; she wears the outfit picked in brackets: the maid dress is a maid dress with an apron printed with the logo of the colour scheme's vendor, and the winter outfit a cape with a whale hood and a striped scarf"
   },
   "author": "Pal-AI-Lab",
   "credits": [
@@ -31,13 +40,23 @@
       "id": "scheme",
       "name": {
         "zh": "配色",
-        "en": "Colours"
+        "zh-Hant": "配色",
+        "en": "Colours",
+        "ja": "カラー",
+        "ko": "색상",
+        "fr": "Couleurs",
+        "de": "Farben",
+        "es-419": "Colores",
+        "pt-BR": "Cores",
+        "it": "Colori",
+        "ru": "Цвета"
       },
       "options": [
         {
           "id": "deepseek",
           "name": {
-            "zh": "DeepSeek"
+            "zh": "DeepSeek",
+            "en": "DeepSeek"
           },
           "thumb": "thumbs/deepseek.png",
           "accent": "#4D6BFE"
@@ -45,7 +64,8 @@
         {
           "id": "harness",
           "name": {
-            "zh": "DeepSeek Harness"
+            "zh": "DeepSeek Harness",
+            "en": "DeepSeek Harness"
           },
           "thumb": "thumbs/harness.png",
           "accent": "#555555"
@@ -53,7 +73,8 @@
         {
           "id": "chatgpt",
           "name": {
-            "zh": "ChatGPT"
+            "zh": "ChatGPT",
+            "en": "ChatGPT"
           },
           "thumb": "thumbs/chatgpt.png",
           "accent": "#303030"
@@ -61,7 +82,8 @@
         {
           "id": "claude",
           "name": {
-            "zh": "Claude"
+            "zh": "Claude",
+            "en": "Claude"
           },
           "thumb": "thumbs/claude.png",
           "accent": "#D97757"
@@ -69,7 +91,8 @@
         {
           "id": "gemini",
           "name": {
-            "zh": "Gemini"
+            "zh": "Gemini",
+            "en": "Gemini"
           },
           "thumb": "thumbs/gemini.png",
           "accent": "#4285F4"
@@ -77,7 +100,9 @@
         {
           "id": "qwen",
           "name": {
-            "zh": "千问"
+            "zh": "千问",
+            "zh-Hant": "千問",
+            "en": "Qwen"
           },
           "thumb": "thumbs/qwen.png",
           "accent": "#7F69F0"
@@ -85,7 +110,8 @@
         {
           "id": "kimi",
           "name": {
-            "zh": "Kimi"
+            "zh": "Kimi",
+            "en": "Kimi"
           },
           "thumb": "thumbs/kimi.png",
           "accent": "#007CFF"
@@ -93,10 +119,63 @@
         {
           "id": "minimax",
           "name": {
-            "zh": "MiniMax"
+            "zh": "MiniMax",
+            "en": "MiniMax"
           },
           "thumb": "thumbs/minimax.png",
           "accent": "#D92D7A"
+        }
+      ]
+    },
+    {
+      "id": "outfit",
+      "name": {
+        "zh": "服装",
+        "zh-Hant": "服裝",
+        "en": "Outfit",
+        "ja": "衣装",
+        "ko": "의상",
+        "fr": "Tenue",
+        "de": "Outfit",
+        "es-419": "Atuendo",
+        "pt-BR": "Roupa",
+        "it": "Outfit",
+        "ru": "Наряд"
+      },
+      "options": [
+        {
+          "id": "maid",
+          "thumb": "thumbs/maid.png",
+          "name": {
+            "zh": "女仆装",
+            "zh-Hant": "女僕裝",
+            "en": "Maid dress",
+            "ja": "メイド服",
+            "ko": "메이드복",
+            "fr": "Robe de soubrette",
+            "de": "Dienstmädchenkleid",
+            "es-419": "Vestido de sirvienta",
+            "pt-BR": "Vestido de empregada",
+            "it": "Abito da cameriera",
+            "ru": "Платье горничной"
+          }
+        },
+        {
+          "id": "cape",
+          "thumb": "thumbs/cape.png",
+          "name": {
+            "zh": "冬装",
+            "zh-Hant": "冬裝",
+            "en": "Winter outfit",
+            "ja": "冬服",
+            "ko": "겨울옷",
+            "fr": "Tenue d'hiver",
+            "de": "Winteroutfit",
+            "es-419": "Ropa de invierno",
+            "pt-BR": "Roupa de inverno",
+            "it": "Abito invernale",
+            "ru": "Зимний наряд"
+          }
         }
       ]
     }
@@ -105,12 +184,13 @@
     {
       "id": "deepseek",
       "pick": {
-        "scheme": "deepseek"
+        "scheme": "deepseek",
+        "outfit": "maid"
       },
       "name": {
-        "zh": "DeepSeek"
+        "zh": "DeepSeek",
+        "en": "DeepSeek"
       },
-      "thumb": "thumbs/deepseek.png",
       "accent": "#4D6BFE",
       "console": {
         "light": {
@@ -134,12 +214,13 @@
     {
       "id": "harness",
       "pick": {
-        "scheme": "harness"
+        "scheme": "harness",
+        "outfit": "maid"
       },
       "name": {
-        "zh": "DeepSeek Harness"
+        "zh": "DeepSeek Harness",
+        "en": "DeepSeek Harness"
       },
-      "thumb": "thumbs/harness.png",
       "accent": "#555555",
       "console": {
         "light": {
@@ -163,12 +244,13 @@
     {
       "id": "chatgpt",
       "pick": {
-        "scheme": "chatgpt"
+        "scheme": "chatgpt",
+        "outfit": "maid"
       },
       "name": {
-        "zh": "ChatGPT"
+        "zh": "ChatGPT",
+        "en": "ChatGPT"
       },
-      "thumb": "thumbs/chatgpt.png",
       "accent": "#303030",
       "console": {
         "light": {
@@ -192,12 +274,13 @@
     {
       "id": "claude",
       "pick": {
-        "scheme": "claude"
+        "scheme": "claude",
+        "outfit": "maid"
       },
       "name": {
-        "zh": "Claude"
+        "zh": "Claude",
+        "en": "Claude"
       },
-      "thumb": "thumbs/claude.png",
       "accent": "#D97757",
       "console": {
         "light": {
@@ -221,12 +304,13 @@
     {
       "id": "gemini",
       "pick": {
-        "scheme": "gemini"
+        "scheme": "gemini",
+        "outfit": "maid"
       },
       "name": {
-        "zh": "Gemini"
+        "zh": "Gemini",
+        "en": "Gemini"
       },
-      "thumb": "thumbs/gemini.png",
       "accent": "#4285F4",
       "console": {
         "light": {
@@ -250,12 +334,14 @@
     {
       "id": "qwen",
       "pick": {
-        "scheme": "qwen"
+        "scheme": "qwen",
+        "outfit": "maid"
       },
       "name": {
-        "zh": "千问"
+        "zh": "千问",
+        "zh-Hant": "千問",
+        "en": "Qwen"
       },
-      "thumb": "thumbs/qwen.png",
       "accent": "#7F69F0",
       "console": {
         "light": {
@@ -279,12 +365,13 @@
     {
       "id": "kimi",
       "pick": {
-        "scheme": "kimi"
+        "scheme": "kimi",
+        "outfit": "maid"
       },
       "name": {
-        "zh": "Kimi"
+        "zh": "Kimi",
+        "en": "Kimi"
       },
-      "thumb": "thumbs/kimi.png",
       "accent": "#007CFF",
       "console": {
         "light": {
@@ -308,12 +395,13 @@
     {
       "id": "minimax",
       "pick": {
-        "scheme": "minimax"
+        "scheme": "minimax",
+        "outfit": "maid"
       },
       "name": {
-        "zh": "MiniMax"
+        "zh": "MiniMax",
+        "en": "MiniMax"
       },
-      "thumb": "thumbs/minimax.png",
       "accent": "#D92D7A",
       "console": {
         "light": {
@@ -345,7 +433,8 @@
         ]
       },
       "about": {
-        "zh": "默认的脸"
+        "zh": "默认的脸",
+        "en": "the default face"
       },
       "seconds": 0.9
     },
@@ -359,7 +448,8 @@
         ]
       },
       "about": {
-        "zh": "眯眼笑,鲸鳍竖起来,尾巴摇"
+        "zh": "眯眼笑,鲸鳍竖起来,尾巴摇",
+        "en": "smiles with narrowed eyes, fins perk up, tail wags"
       },
       "seconds": 0.9
     },
@@ -372,7 +462,8 @@
         ]
       },
       "about": {
-        "zh": "一只眼 ^"
+        "zh": "一只眼 ^",
+        "en": "one eye turns into ^"
       },
       "seconds": 0.9
     },
@@ -386,7 +477,8 @@
         ]
       },
       "about": {
-        "zh": "眼睛变心形,冒小心心,尾巴摇"
+        "zh": "眼睛变心形,冒小心心,尾巴摇",
+        "en": "heart-shaped eyes, little hearts float up, tail wags"
       },
       "seconds": 0.9
     },
@@ -399,7 +491,8 @@
         ]
       },
       "about": {
-        "zh": "脸红,眼神躲开"
+        "zh": "脸红,眼神躲开",
+        "en": "blushes and looks away"
       },
       "seconds": 0.9
     },
@@ -413,7 +506,8 @@
         ]
       },
       "about": {
-        "zh": "眼睛放大,头顶感叹号"
+        "zh": "眼睛放大,头顶感叹号",
+        "en": "eyes go wide, an exclamation mark overhead"
       },
       "seconds": 0.9
     },
@@ -426,7 +520,8 @@
         ]
       },
       "about": {
-        "zh": "皱眉,头顶怒气符号,身体发抖"
+        "zh": "皱眉,头顶怒气符号,身体发抖",
+        "en": "frowns, an anger mark overhead, body shaking"
       },
       "seconds": 0.9
     },
@@ -440,7 +535,8 @@
         ]
       },
       "about": {
-        "zh": "八字眉,低头,掉眼泪,尾巴垂下"
+        "zh": "八字眉,低头,掉眼泪,尾巴垂下",
+        "en": "brows slant down, head lowered, tears fall, tail droops"
       },
       "seconds": 0.9
     },
@@ -454,7 +550,8 @@
         ]
       },
       "about": {
-        "zh": "眯眼打哈欠"
+        "zh": "眯眼打哈欠",
+        "en": "squints and yawns"
       },
       "seconds": 0.9
     },
@@ -468,7 +565,8 @@
         ]
       },
       "about": {
-        "zh": "眼睛往上看,头顶冒圈"
+        "zh": "眼睛往上看,头顶冒圈",
+        "en": "looks up, rings rise overhead"
       },
       "seconds": 0.9
     },
@@ -482,7 +580,8 @@
         ]
       },
       "about": {
-        "zh": "眯眼斜看,嘴角带笑"
+        "zh": "眯眼斜看,嘴角带笑",
+        "en": "a narrowed sidelong look and a smirk"
       },
       "seconds": 0.9
     },
@@ -496,7 +595,8 @@
         ]
       },
       "about": {
-        "zh": "嘴嘟起来,脸红,扭头不看你"
+        "zh": "嘴嘟起来,脸红,扭头不看你",
+        "en": "pouts, blushes and turns away from you"
       },
       "seconds": 0.9
     },
@@ -510,7 +610,8 @@
         ]
       },
       "about": {
-        "zh": "八字眉,冒冷汗"
+        "zh": "八字眉,冒冷汗",
+        "en": "brows slant down, a cold sweat"
       },
       "seconds": 0.9
     },
@@ -524,7 +625,8 @@
         ]
       },
       "about": {
-        "zh": "眼神压低,一脸认真"
+        "zh": "眼神压低,一脸认真",
+        "en": "a lowered gaze, a serious face"
       },
       "seconds": 0.9
     },
@@ -538,7 +640,8 @@
         ]
       },
       "about": {
-        "zh": "眼睛变成 > <,满脸通红冒汗"
+        "zh": "眼睛变成 > <,满脸通红冒汗",
+        "en": "eyes turn into > <, red all over and sweating"
       },
       "seconds": 0.9
     },
@@ -552,7 +655,8 @@
         ]
       },
       "about": {
-        "zh": "眼睛瞪大,冒汗,身体发抖"
+        "zh": "眼睛瞪大,冒汗,身体发抖",
+        "en": "eyes wide, sweating, body shaking"
       },
       "seconds": 0.9
     },
@@ -566,7 +670,8 @@
         ]
       },
       "about": {
-        "zh": "眼睛里闪着星星"
+        "zh": "眼睛里闪着星星",
+        "en": "stars sparkle in the eyes"
       },
       "seconds": 0.9
     },
@@ -580,7 +685,8 @@
         ]
       },
       "about": {
-        "zh": "闭眼大哭,眼泪直流"
+        "zh": "闭眼大哭,眼泪直流",
+        "en": "eyes shut, wailing, tears streaming"
       },
       "seconds": 0.9
     },
@@ -594,7 +700,8 @@
         ]
       },
       "about": {
-        "zh": "一脸不解,头顶问号"
+        "zh": "一脸不解,头顶问号",
+        "en": "a puzzled face, a question mark overhead"
       },
       "seconds": 0.9
     },
@@ -608,7 +715,8 @@
         ]
       },
       "about": {
-        "zh": "站起来(坐着、睡着时)"
+        "zh": "站起来(坐着、睡着时)",
+        "en": "stands up (when sitting or asleep)"
       },
       "seconds": 1.2
     },
@@ -622,7 +730,8 @@
         ]
       },
       "about": {
-        "zh": "原地起跳"
+        "zh": "原地起跳",
+        "en": "jumps on the spot"
       },
       "seconds": 1.2
     },
@@ -636,7 +745,8 @@
         ]
       },
       "about": {
-        "zh": "小小蹦一下"
+        "zh": "小小蹦一下",
+        "en": "a small hop"
       },
       "seconds": 0.9
     },
@@ -650,7 +760,8 @@
         ]
       },
       "about": {
-        "zh": "左右张望"
+        "zh": "左右张望",
+        "en": "looks left and right"
       },
       "seconds": 2.7
     },
@@ -663,7 +774,8 @@
         ]
       },
       "about": {
-        "zh": "转向另一边"
+        "zh": "转向另一边",
+        "en": "turns to face the other way"
       },
       "seconds": 0.4
     },
@@ -676,7 +788,8 @@
         ]
       },
       "about": {
-        "zh": "低头两下"
+        "zh": "低头两下",
+        "en": "dips the head twice"
       },
       "seconds": 0.8
     },
@@ -689,7 +802,8 @@
         ]
       },
       "about": {
-        "zh": "脸左右转"
+        "zh": "脸左右转",
+        "en": "turns the face left and right"
       },
       "seconds": 0.8
     },
@@ -702,7 +816,8 @@
         ]
       },
       "about": {
-        "zh": "原地转一圈"
+        "zh": "原地转一圈",
+        "en": "spins around once on the spot"
       },
       "seconds": 0.8
     },
@@ -716,7 +831,8 @@
         ]
       },
       "about": {
-        "zh": "坐下"
+        "zh": "坐下",
+        "en": "sits down"
       },
       "seconds": 0.8,
       "lasting": true
@@ -731,7 +847,8 @@
         ]
       },
       "about": {
-        "zh": "坐着打盹"
+        "zh": "坐着打盹",
+        "en": "dozes sitting down"
       },
       "seconds": 0.8,
       "lasting": true
@@ -746,7 +863,8 @@
         ]
       },
       "about": {
-        "zh": "头晕眼花几秒"
+        "zh": "头晕眼花几秒",
+        "en": "dizzy for a few seconds"
       },
       "seconds": 3.2
     },
@@ -760,7 +878,8 @@
         ]
       },
       "about": {
-        "zh": "随便走一段"
+        "zh": "随便走一段",
+        "en": "wanders a little way"
       },
       "seconds": 12
     },
@@ -774,7 +893,8 @@
         ]
       },
       "about": {
-        "zh": "跑到屏幕另一头"
+        "zh": "跑到屏幕另一头",
+        "en": "runs to the other end of the screen"
       },
       "seconds": 12
     },
@@ -788,7 +908,8 @@
         ]
       },
       "about": {
-        "zh": "举起靠近你的那只手挥一挥"
+        "zh": "举起靠近你的那只手挥一挥",
+        "en": "raises the hand nearer to you and waves"
       },
       "seconds": 1.7
     },
@@ -801,7 +922,8 @@
         ]
       },
       "about": {
-        "zh": "闭眼,上身往前倾鞠一躬"
+        "zh": "闭眼,上身往前倾鞠一躬",
+        "en": "closes the eyes and bows from the waist"
       },
       "seconds": 1.7
     },
@@ -815,7 +937,8 @@
         ]
       },
       "about": {
-        "zh": "缩着身子抖一会儿"
+        "zh": "缩着身子抖一会儿",
+        "en": "huddles up and shivers for a while"
       },
       "seconds": 1.9
     },
@@ -829,7 +952,8 @@
         ]
       },
       "about": {
-        "zh": "开心地蹦起来,鲸鳍、尾巴、呆毛一起扑腾"
+        "zh": "开心地蹦起来,鲸鳍、尾巴、呆毛一起扑腾",
+        "en": "bounces happily, fins, tail and ahoge all flapping"
       },
       "seconds": 1.5
     },
@@ -843,7 +967,8 @@
         ]
       },
       "about": {
-        "zh": "原地踩着节拍摇摆三秒,冒音符"
+        "zh": "原地踩着节拍摇摆三秒,冒音符",
+        "en": "sways to a beat on the spot for three seconds, music notes floating up"
       },
       "seconds": 3.4
     }

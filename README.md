@@ -30,17 +30,20 @@
 
 Coopanion is a desktop pet. **Coo** lives on the bottom edge of your screen: it chats with you in speech bubbles, listens when you talk, walks along the edge, and with your permission can use your computer. It runs on Windows, macOS and Linux.
 
-The app is in Chinese and English. The first-run guide is currently Chinese only.
+**Languages**: the app and its first-run guide are in 简体中文, 繁體中文, English, 日本語, 한국어, Français, Deutsch, Español (Latinoamérica), Português (Brasil), Italiano and Русский. A new install uses the system language (English when the system language is none of these). Upgrades keep the existing language. Change it under **Language** on the Habits page. Coo talks to you in the app language.
 
 ![1790222143546](image/README/1790222143546.png)
 
+<p align="center"><img src="image/README/pet-desktop-en.png" alt="Coo" width="640"></p>
+
 ## Features
 
-- **Many model services**: DeepSeek, Qwen, Kimi, Zhipu GLM, Doubao, Baidu Qianfan, MiniMax, StepFun and OpenRouter. Pick one and paste an API key.
-- **Chat**: hold the talk key and speak, or type; Coo answers in a bubble. Speech is recognized on your machine with FunASR.
+- **Many model services**: OpenAI, Anthropic, Gemini, xAI, OpenRouter, DeepSeek, Kimi, Qwen, MiniMax, Zhipu GLM, Doubao, Baidu Qianfan and StepFun. Pick one and paste an API key, or sign in with a ChatGPT account to use its ChatGPT plan.
+- **Chat**: hold the talk key and speak, or type; Coo answers in a bubble. Speech is recognized on your machine with FunASR or Whisper, picked by the app language.
 - **Memory**: Coo remembers what you talked about, and knows when you poke it or pat its head.
 - **Computer use**: clicking buttons, typing, switching windows. Coo asks before it acts.
-- **Two figures**: Coo, or the **DeepSeek Whale**, a fully animated whale maid with eight vendor color schemes.
+- **Activity bubbles**: see when Coo is thinking and what it is working on, with a different animated icon for reading, searching, writing and using the computer. File names appear; the bubble lets clicks through. On by default; turn it off in Habits.
+- **Figures**: Coo, or the **DeepSeek Whale**, a fully animated whale girl with eight vendor color schemes and two outfits (a maid dress and a winter outfit). Other figure packs are imported on the Dress up page from a zip or a folder; packs written for figure API 2 keep loading in later versions (see the [figure pack compatibility promise](packages/cortico-world-desktop-pet/README.md#形象包兼容承诺)).
 - **Dress up**: Coo's colors, hats, earrings, glasses and neckwear, plus its size and how often it walks.
 - **Extensions**: install Worlds such as a QQ bot, a drawing room and small games from the Extensions page.
 
@@ -52,14 +55,14 @@ You need one of:
 
 - Windows 10 / 11 (64-bit)
 - macOS 13 or later (Apple silicon or Intel)
-- A 64-bit Linux desktop (X11, or XWayland under Wayland)
+- A 64-bit Linux desktop (X11, or XWayland under Wayland); speech recognition needs glibc 2.32 or later (Ubuntu 22.04, Debian 12 and later)
 
-You also need an API key from one model service. [DeepSeek](https://platform.deepseek.com/) is the default; it bills by usage (see [Cost and privacy](#cost-and-privacy)). Installing does not need administrator rights.
+You also need an API key from one model service, which bills you for usage (see [Cost and privacy](#cost-and-privacy)), or a ChatGPT account with a plan. The guide lists DeepSeek first when the app language is Simplified Chinese and OpenAI first in every other language. Installing does not need administrator rights.
 
 ### Windows: installer
 
 1. Open the [latest release](https://github.com/Pal-AI-Lab/Coopanion/releases/latest) and download `Coopanion-Setup-<version>.exe`.
-2. Run it. The installer is not code-signed, so Windows may show "Windows protected your PC": click **More info** → **Run anyway**.
+2. Run it; its pages follow the system language. The installer is not code-signed, so Windows may show "Windows protected your PC": click **More info** → **Run anyway**.
 3. Pick a folder (default `C:\Users\<you>\Coopanion`) and install. Coopanion starts when done, and a desktop icon is added.
 
 > [!NOTE]
@@ -75,6 +78,10 @@ irm https://raw.githubusercontent.com/Pal-AI-Lab/Coopanion/main/installer/instal
 
 It downloads the latest installer, runs it, and deletes the download afterwards.
 
+If the graphical installer fails (antivirus software can stop it halfway), the downloaded installer
+is kept and its path printed. Retry it silently with `Coopanion-Setup-<version>.exe /S`, or add
+Coopanion to your antivirus's allowed list first.
+
 ### macOS
 
 1. Open the [latest release](https://github.com/Pal-AI-Lab/Coopanion/releases/latest). On Apple silicon download `Coopanion-<version>-mac-arm64.dmg`; on Intel download `…-mac-x64.dmg`.
@@ -84,7 +91,7 @@ It downloads the latest installer, runs it, and deletes the download afterwards.
 4. Coopanion lives in the menu bar at the top of the screen. It shows in the Dock only while the settings window is open.
 
 > [!NOTE]
-> Data is in `~/Library/Application Support/Coopanion`. macOS asks separately for Microphone (voice input), Input Monitoring (talk key), and Screen & System Audio Recording plus Accessibility (computer use) the first time each is needed. To keep Coo off your computer, deny the last two. Restart Coopanion after changing Input Monitoring, Accessibility or Screen Recording.
+> Data is in `~/Library/Application Support/Coopanion`. macOS asks separately for Microphone (voice input), Input Monitoring (talk key), and Screen & System Audio Recording plus Accessibility (computer use) the first time each is needed. To keep Coo off your computer, deny the last two. Restart Coopanion after changing Input Monitoring, Accessibility or Screen Recording. The app is not signed with an Apple Developer ID, so macOS does not carry these grants over to an updated version: if Coopanion says a permission is missing while its switch is on, remove Coopanion from that list with −, add `/Applications/Coopanion.app` back and restart.
 
 ### Linux
 
@@ -101,15 +108,17 @@ It downloads the latest installer, runs it, and deletes the download afterwards.
 
 1. **Start**: Coo drops to the bottom of the screen and an icon appears in the tray (menu bar on Mac, status bar on Linux). No window opens.
 2. **Guide**: on first start Coo walks you through setup in its bubbles; you pick or type the answers right there:
-   1. what Coo should call you;
+   1. what Coo should call you, and where you heard about Coopanion ("I'd rather not say" is one of the answers; the answer is sent with the anonymous usage statistics when they are on);
    2. how much it walks around: stay put / now and then / often;
-   3. which model service to use (DeepSeek, listed first, if unsure), then paste the API key and test the connection;
-   4. download the speech model (FunASR, about 230 MB, from ModelScope), then how to talk to Coo;
+   3. which model service to use (the first one listed if unsure), then paste the API key and test the connection;
+   4. download the speech model (FunASR, about 230 MB; Whisper, about 360 MB, when the app language is French, German, Spanish, Portuguese, Italian or Russian; from ModelScope), then how to talk to Coo;
    5. where the buttons, menu and settings are, and that the persona is on the System prompt page of the settings window.
 
    After the guide you can talk Coo through its personality, way of speaking and what you call each other; it can write the persona into its prompt itself.
 
-   The × at the top right of the bubble ends the guide at any time. Run it again from **Guide** on the Start page. If you chose to enter the key later, Coo asks again after a while.
+   Coo's persona and prompts are written in Chinese when the app language is Simplified or Traditional Chinese and in English for every other language; for languages other than Simplified Chinese and English, Coo is also told to talk to you in the app language. Changing the language swaps the starting persona for the other version as long as you have not edited it; Coo reads it from its next session. An edited persona stays as it is.
+
+   The × at the top right of the bubble ends the guide at any time. Run it again from **Guide** on the Start page. If you chose to enter the key later, Coo asks again after a while, and each time you talk to it before a model is connected it offers to connect one.
 3. **Say hello**: tap **Left Alt** (**Left Option** on Mac), then press and hold it, say "hello", and release to send. Allow microphone access when asked.
 
 <details>
@@ -121,23 +130,31 @@ For DeepSeek:
 2. Top up your balance (billed by usage);
 3. API Keys → Create API key, copy the string that starts with `sk-`, and paste it into Coo's bubble or the Start page.
 
-For the others, select the service in the bubble or on the Start page and use its "get a key" link:
+For the others, select the service in the bubble or on the Start page and use its "get a key" link. The table is in the order the app lists services for languages other than Simplified Chinese:
 
-| Service                  | Get a key                                                                                          | Default model                                                              |
-| ------------------------ | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| DeepSeek                 | [platform.deepseek.com](https://platform.deepseek.com/api_keys)                                    | `deepseek-flash`                                                           |
-| Qwen (Alibaba Bailian)   | [bailian.console.aliyun.com](https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key) | `qwen3.8-flash`                                                            |
-| Kimi (Moonshot)          | [platform.kimi.com](https://platform.kimi.com/console/api-keys)                                    | `kimi-k3`                                                                  |
-| Zhipu GLM                | [bigmodel.cn](https://bigmodel.cn/usercenter/proj-mgmt/apikeys)                                    | `glm-5.3-flash` (switch to `glm-5.3` if it fails to connect)               |
-| Doubao (Volcengine Ark)  | [ark.volcengine.com](https://ark.volcengine.com/region:cn-beijing/apikey)                          | `doubao-seed-2-1-lite-260915` (enable it in the Ark console first)         |
-| Baidu Qianfan            | [console.bce.baidu.com](https://console.bce.baidu.com/iam/#/iam/apikey/list)                       | `glm-5.1` (Qianfan's Responses API has no ERNIE and no vision model)       |
-| MiniMax                  | [platform.minimax.cn](https://platform.minimax.cn/user-center/basic-information/interface-key)     | `MiniMax-M3`                                                               |
-| StepFun                  | [platform.stepfun.com](https://platform.stepfun.com/interface-key)                                 | `step-3.7-flash`                                                           |
-| OpenRouter               | [openrouter.ai](https://openrouter.ai/settings/keys)                                               | `deepseek/deepseek-v4.1-flash`                                             |
+| Service                               | Get a key                                                                                                                                                                                  | Default model                                                                     |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| OpenAI                                | [platform.openai.com](https://platform.openai.com/settings/organization/api-keys)                                                                                                          | `gpt-6-luna`                                                                      |
+| Anthropic                             | [platform.claude.com](https://platform.claude.com/settings/keys)                                                                                                                           | `claude-haiku-5-5`                                                                |
+| Gemini (Google AI Studio)             | [aistudio.google.com](https://aistudio.google.com/apikey)                                                                                                                                  | `gemini-3.5-flash-lite`                                                           |
+| xAI                                   | [console.x.ai](https://console.x.ai/team/default/api-keys)                                                                                                                                 | `grok-4.3`                                                                        |
+| OpenRouter                            | [openrouter.ai](https://openrouter.ai/settings/keys)                                                                                                                                       | `deepseek/deepseek-v4.1-flash`                                                    |
+| DeepSeek                              | [platform.deepseek.com](https://platform.deepseek.com/api_keys)                                                                                                                            | `deepseek-flash`                                                                  |
+| Kimi (Moonshot)                       | international [platform.kimi.ai](https://platform.kimi.ai/console/api-keys), mainland China [platform.kimi.com](https://platform.kimi.com/console/api-keys)                                 | `kimi-k3`                                                                         |
+| Qwen (Alibaba Cloud Model Studio)     | international [modelstudio.console.alibabacloud.com](https://modelstudio.console.alibabacloud.com/ap-southeast-1/model/settings/api-key), mainland China [bailian.console.aliyun.com](https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key) | `qwen3.8-flash`                                                                   |
+| MiniMax                               | international [platform.minimax.io](https://platform.minimax.io/user-center/basic-information/interface-key), mainland China [platform.minimax.cn](https://platform.minimax.cn/user-center/basic-information/interface-key) | `MiniMax-M3`                                                                      |
+| Zhipu GLM                             | international (Z.ai) [z.ai](https://z.ai/manage-apikey/apikey-list), mainland China [bigmodel.cn](https://bigmodel.cn/usercenter/proj-mgmt/apikeys)                                        | `glm-5.3-flash` (on the mainland China platform, switch to `glm-5.3` if it fails to connect) |
+| Doubao (Volcengine Ark)               | [ark.volcengine.com](https://ark.volcengine.com/region:cn-beijing/apikey)                                                                                                                  | `doubao-seed-2-1-lite-260915` (enable it in the Ark console first)                |
+| Baidu Qianfan                         | [console.bce.baidu.com](https://console.bce.baidu.com/iam/#/iam/apikey/list)                                                                                                               | `glm-5.3-flash`                                                                   |
+| StepFun                               | [platform.stepfun.com](https://platform.stepfun.com/interface-key)                                                                                                                         | `step-3.7-flash`                                                                  |
 
-Each default is the cheap, vision-capable tier of that vendor. To use another model, change the name in the guide or in the Model field on the Start page.
+Each default is the fast, cheap, vision-capable tier of that vendor. To use another model, change the name in the guide or in the Model field on the Start page.
 
-Services other than DeepSeek follow their documentation and have not each been tested with a real key. If one fails, please open an issue.
+Kimi, Qwen, MiniMax and Zhipu GLM have separate mainland China and international platforms, with separate accounts and keys. New connections use the mainland China platform when the app language is Simplified Chinese and the international one otherwise; switch between them on the Start page. Doubao, Baidu Qianfan and StepFun take mainland China accounts only and appear under **More** in other languages.
+
+Only DeepSeek and Anthropic have been tested with real keys; the others follow their documentation. Open an issue if one fails.
+
+**ChatGPT** takes no key: pick it and press **Continue with ChatGPT**, then sign in in the browser that opens (Sign in with ChatGPT). Coo's requests count toward that account's ChatGPT plan, and its usage limits apply; keep an eye on them in ChatGPT's settings. When the limit is reached, Coo goes quiet and tries again every few minutes until the plan allows requests again. The connection starts on the first model the plan lists; the sign-in is kept in the connection's folder and renewed by itself. The ChatGPT section of the connection on the Model page in advanced mode signs in again or out; deleting the connection signs it out, and it cannot be duplicated. Signing in has not been tried with a real account yet.
 
 </details>
 
@@ -152,33 +169,34 @@ Services other than DeepSeek follow their documentation and have not each been t
 | Mic button    | Appears when the pointer rests on Coo and turns voice input on or off. Its corner shows the talk key (`ALT×2` by default) while listening on the key, AUTO while always listening. Long-press it while listening to send the sentence at once. |
 | Answering     | When Coo offers choices, click one or press 1–3; if none fits, write your own in the last box.                                         |
 
-Talk key, microphone and listening mode (hold to talk / press to toggle / always listen) are on the Voice input page. Click the talk key button and press a single key, a combination such as `Ctrl + Space`, or a mouse side button; beside it, choose **Double-tap, then hold** (the default) or **Just hold**. When the talk key is unavailable, Coo falls back to always listening and the button shows AUTO.
+Talk key, microphone and listening mode (hold to talk / press to toggle / always listen) are on the Voice input page. Click the talk key button and press a single key, a combination such as `Ctrl + Space`, or a mouse side button; beside it, choose **Double-tap, then hold** (the default) or **Just hold**. When the talk key is unavailable, speech is not recognized; the Voice input page says why.
 
-Speech is recognized on your machine by **FunASR** (the SenseVoiceSmall model) and audio is never uploaded. The model is about 230 MB and is downloaded once, from the guide or the Voice input page. On Windows you can use the built-in recognizer instead, which needs no download but is less accurate.
+Speech is recognized on your machine and audio is never uploaded: by **FunASR** (the SenseVoiceSmall model, about 230 MB) when the app language is Chinese, English, Japanese or Korean, and by **Whisper** (the small model, about 360 MB; the text appears once a sentence ends) for French, German, Spanish, Portuguese, Italian and Russian. The model is downloaded once, from the guide or the Voice input page. On Windows you can use the built-in recognizer instead, which needs no download but is less accurate.
 
 ### Playing with Coo
 
-- **Click** to poke it, **move back and forth over its head** to pat it, **press and drag** to pick it up; let go mid-swing to throw it. A poke makes Coo respond. Pats and pick-ups are passed on the next time it wakes. To have every touch wake it, set the desktop pet World's touch wake option to `all` in advanced mode.
+- **Click** to poke it, **move back and forth over its head** to pat it, **press and drag** to pick it up; let go mid-swing to throw it. By default a poke makes Coo respond, and pats and pick-ups are passed on the next time it wakes. **Response mode** in Habits changes this: Quiet keeps every touch until you next talk to Coo, Eager responds to every touch, Custom… picks the touches that get a response right away.
 - **Expressions and motions**: Coo pairs what it says with a face and a motion. Faces: happy, wink, love, shy, surprised, angry, sad, sleepy, thinking, smug, pout, worried, determined, flustered, scared, excited (starry eyes), crying, confused. Motions include nod, shake, look around, turn, spin, jump, sit, sleep, wave, bow, shiver, flap, dance. As the DeepSeek Whale, a nod really dips the head and a shake turns the face, a wave raises the arm nearer you, and a bow tips the upper body forward.
-- **Right-click** for the menu: pause / resume, settings, quit, plus typing, voice input, walking, night mode, sounds, dress up and hide.
+- **Right-click** for the menu: pause / resume, settings, quit, plus typing, voice input, night mode, sounds, hide and dress up.
 - **Hover buttons**: the buttons beside Coo while the pointer rests on it. Typing and voice by default; pick up to six in Habits.
 - **Remember where Coo stands**: turn it on in Habits and Coo returns to the same spot across the screen on the next start.
+- **OBS overlay**: turn on Export OBS overlay under Habits › Other, then add a Browser source in OBS with the address shown and your screen's resolution as its size. A Browser source draws 30 frames a second unless its custom frame rate is set; set it to 60 to see the pet at 60. Coo and its bubbles sit where they are on screen, on a transparent background.
 - **Several displays**: Coo starts on the main display. Carry it to another display and let go to move it there. If that display is unplugged, Coo returns to the main one.
 
 ### Letting Coo use your computer
 
-Computer use is on by default, but each turn Coo asks before it first looks at the screen or uses the mouse and keyboard. It acts only after you say yes.
+Computer use is on by default. Coo looks at the screen without asking, and asks before it first uses the mouse and keyboard; after you say yes it does not ask again for 30 minutes. Installs from before this default keep asking every turn.
 
-- Loosen this under **When to ask you** on the Computer use page, from strictest to loosest:
-  - `ask-each-turn`: ask every turn (default);
+- Change this under **When to ask you** in the Computer use section of the Habits page, from strictest to loosest:
+  - `ask-each-turn`: ask every turn;
   - `ask-before-acting`: looking is not asked; ask every turn before using the mouse and keyboard;
-  - `ask-once`: looking is not asked; ask once before acting, then not again for the time set in **A yes lasts** (30 minutes by default);
+  - `ask-once` (default): looking is not asked; ask once before acting, then not again for the time set in **A yes lasts** (30 minutes by default);
   - `never-ask`: never ask.
 - When you touch the mouse or keyboard, Coo stops and waits for you.
 - Logins, passwords and payments are left to you.
 - One wake makes at most 40 model requests; at the limit the turn ends and you can tell Coo to continue. The limit is on the Cormini page in advanced mode and applies after a restart.
 
-To keep Coo off your computer, untick **Let Coo use this computer** on the Computer use page.
+To keep Coo off your computer, untick **Let Coo use this computer** in the Computer use section of the Habits page.
 
 ### Tray / menu bar
 
@@ -188,32 +206,38 @@ The tray icon (menu bar on Mac, status bar on Linux) has a menu to open the sett
 
 ## Settings window
 
+The sidebar button switches between full labels and an icon rail and remembers your choice. Hover or focus an icon to see its name. The Coopanion wordmark folds into the Coo logo: both o letters move inside the C. Narrow windows start with the icon rail; expanding it on a small screen overlays the page.
+
 Click the tray icon, or right-click Coo and click the gear. The window opens in **normal mode**, which shows only the pages about the pet:
 
 | Page          | What is there                                                                                                    |
 | ------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Start         | Connect a model, see whether Coo is awake, show the pet, rerun the guide. Pause / resume is at the bottom left.   |
-| Habits        | What to call you, walking, colors, size, remembering the position, hover buttons, double-click typing, sounds (each kind can be muted), 60 fps lock, hiding during full screen (Windows), letting Coo adjust itself, anonymous usage statistics |
-| Dress up      | Figure (Coo, the DeepSeek Whale or an installed figure pack), colors and accessories; changes apply at once                                 |
+| Start         | Connect a model (the connected one and the other model services in one place), show or hide the pet on the desktop, preview the pet, pick the interface colors or edit their palette, rerun the guide. The bottom left says Running / Paused, beside pause / resume and shut down. |
+| Habits        | In sections: General (app language, your name, anonymous usage statistics), Behavior (walking, how Coo responds, what Coo may change by itself, hover buttons, double-click to type, status bubble), Display (size, frame rate, hide in full screen on Windows, remember position), Sounds (each kind can be turned off), Computer use (on/off, mouse and keyboard, when to ask you, how long a yes lasts), Other (OBS overlay) |
+| Dress up      | Figure (Coo, the DeepSeek Whale or an installed figure pack), colors and accessories; changes apply at once. **Import** at the end of the figure row installs packs from a zip or a folder (up to 128 MB at a time); dropping one on the page works too |
 | Voice input   | On/off, recognizer, model download, talk key, microphone, listening mode                                          |
-| Computer use  | On/off, mouse and keyboard permission, when to ask you, how long a yes lasts                                      |
-| System prompt | Coo's system prompt; the persona is the CONSTITUTION section. Save with Ctrl+S and apply with **Reload current session**; **Clear and restart** drops the current conversation |
+| System prompt | Coo's system prompt; the persona is the CONSTITUTION section. The sections form one document; all but CONSTITUTION start folded, and folds last until the app quits. Template variables can be inserted and previewed with their current values; in the advanced mode a World's section links to that World's configuration. Ctrl+S saves to file and **Revert all edits** returns to the last save; **Apply now** saves and updates the current conversation's prompt, keeping its messages; **Clear conversation and restart** saves and clears the current conversation, keeping Memory and persona; **Show full prompt** unfolds the whole prompt as assembled from the current files |
 | Usage & cost  | Tokens used and money spent per day                                                                               |
-| Chat          | The current conversation; you can also talk to Coo from here                                                      |
+| Chat          | The current conversation, with the images Coo shows; you can also talk to Coo from here                           |
 
-The current version is shown at the top left, with a download link below it when a newer release is out. The Windows build and the AppImage download new versions in the background; Coo then asks in its bubble whether to restart and update, or the update installs the next time you quit. If a download stalls, get it from GitHub yourself. On Mac and with the deb, download new versions by hand. After an update, Coo tells you what the new version brings; when you change what it calls you, its dress, walking, computer use or similar settings here, it hears about it and responds.
+<p align="center"><img src="image/README/habits-en.png" alt="Habits" width="720"></p>
+<p align="center"><img src="image/README/dress-en.png" alt="Dress up" width="720"></p>
 
-**Advanced mode** at the bottom left shows every page (Worlds, models, extensions, memory, diagnostics); **Back to normal mode** hides them again.
+The expanded sidebar shows the current version at the top left, with a download link below it when a newer release is out. The Windows build and the AppImage download new versions in the background; Coo then asks in its bubble whether to restart and update, or the update installs the next time you quit. If a download stalls, get it from GitHub yourself. On Mac and with the deb, download new versions by hand. After an update, Coo tells you what the new version brings; when you change what it calls you, its dress, walking, computer use or similar settings here, it hears about it and responds.
+
+**Advanced mode** at the bottom left shows every page (Worlds, models, extensions, memory, terminal and diagnostics); **Back to normal mode** hides them again. In normal mode, expand the sidebar to show the Advanced mode button.
 
 ### Changing the model
 
-Under **Connect a model** on the Start page, pick a service, fill in the model name (a default is filled in) and the key. Each service keeps its own key, so switching back needs no re-entry.
+Under **Connect a model** on the Start page, pick a service, fill in the model name (a default is filled in) and the key. Each service, and each platform of a service with two, keeps its own key, so switching back needs no re-entry.
 
-The default is DeepSeek's `deepseek-flash`. Computer use needs a model that can read images; every service's default can, except Qianfan's. The Model page in advanced mode also lets you:
+<p align="center"><img src="image/README/start-en.png" alt="Start" width="720"></p>
+
+The default is the first service listed for the app language at install time: DeepSeek's `deepseek-flash` in Simplified Chinese, OpenAI's `gpt-6-luna` otherwise. Computer use needs a model that can read images; every service's default can. Each platform is called through the API its documentation describes: Anthropic through the Messages API, Gemini through the Gemini API, Baidu Qianfan and Zhipu's international platform Z.ai through Chat Completions, the rest through the Responses API. The Model page in advanced mode also lets you:
 
 - change the model and the reasoning effort;
 - add an "OpenAI Responses Compatible" connection for any other service that speaks the Responses API;
-- enter prices for services other than DeepSeek so Usage & cost can show spending.
+- enter prices for services other than DeepSeek, OpenAI, Anthropic, Gemini and xAI so Usage & cost can show spending.
 
 ### Installing extensions
 
@@ -228,9 +252,9 @@ After installing, click **Restart process** and enable it in **World Overview**.
 
 ## Cost and privacy
 
-- **Cost**: Coopanion is free. The model service you choose bills you for usage; see the Usage & cost page (built-in prices exist for DeepSeek only).
+- **Cost**: Coopanion is free. The model service you choose bills you for usage; see the Usage & cost page (built-in prices exist for DeepSeek, OpenAI, Anthropic, Gemini's paid tier and xAI). Signed in with ChatGPT, requests count toward the ChatGPT plan instead and show no cost.
 - **Sent to the model service**: what you say and type, your interactions with Coo, and screenshots during computer use. Only the service you configured receives them.
-- **Kept on your machine**: API keys, memory, conversation history, settings and logs. Speech is recognized locally and only the text is sent.
+- **Kept on your machine**: API keys and the ChatGPT sign-in, memory, conversation history, settings and logs. Speech is recognized locally and only the text is sent.
 - **Anonymous usage statistics**: sent to `survey.palailab.org`. Only counts, time used, settings and a random install ID; no conversations, screenshots, keys or files. Every field is listed in [docs/TELEMETRY.md](docs/TELEMETRY.md). Turn it off in Habits.
 - **Other network access**: a check for new releases on GitHub when the settings window opens; npm when installing extensions; ModelScope (or Hugging Face as a fallback) when downloading the speech model.
 
@@ -260,7 +284,7 @@ Right-click the tray icon → Show pet. If the tray icon is hidden, click `^` at
 
 Check the status next to the title on the Start page:
 
-- **No model connected**: check that the API key is complete and the account has balance, then click **Test**. Doubao needs the default model enabled in the Ark console first.
+- **No model connected**: check that the API key is complete and the account has balance, then click **Test**. For Kimi, Qwen, MiniMax and Zhipu GLM, the key only works on the platform (mainland China or international) it was created on. Doubao needs the default model enabled in the Ark console first.
 - **Paused**: click resume at the bottom of the left bar.
 
 After 5 failed model requests in a row, Coo says the error in a bubble (unknown model name, invalid key, no balance, …); click **Open settings** to fix it.
@@ -276,14 +300,14 @@ After 5 failed model requests in a row, Coo says the error in a bubble (unknown 
 - Windows: Settings → Privacy & security → Microphone, allow desktop apps to use the microphone;
 - Mac: in System Settings → Privacy & Security, turn on Microphone and Input Monitoring for Coopanion, then restart it.
 
-If the Windows recognizer reports no speech recognizer, install speech recognition for Chinese under Settings → Time & language → Language, or switch back to FunASR.
+If the Windows recognizer reports no speech recognizer, install speech recognition for the app language under Settings → Time & language → Language, or switch back to FunASR or Whisper.
 
 </details>
 
 <details>
 <summary><b>I need a proxy</b></summary>
 
-Set `HTTP_PROXY` / `HTTPS_PROXY` in the environment Coopanion starts from. Local traffic bypasses the proxy. See the [development guide](docs/DEVELOPMENT.md).
+Coopanion uses the system proxy (an HTTP or HTTPS proxy; a SOCKS proxy is not used), read again each time Core starts. `HTTP_PROXY` / `HTTPS_PROXY` set in the environment Coopanion starts from take its place. Local traffic bypasses the proxy. See the [development guide](docs/DEVELOPMENT.md).
 
 </details>
 
@@ -301,10 +325,10 @@ The Chat page has the full record. If something goes wrong, click **Export diagn
 
 ## Acknowledgements
 
-Coopanion is assembled from [Cortico](https://github.com/Pal-AI-Lab/Cortico): Cortico Core + Cormini Persona + the [desktop pet World](packages/cortico-world-desktop-pet) + the [computer use World](packages/cortico-world-cua).
+Coopanion is assembled from [Cortico](https://github.com/Pal-AI-Lab/Cortico): Cortico Core + Cormini Persona + the [desktop pet World](packages/cortico-world-desktop-pet), computer use included.
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE). Releases up to and including 0.1.10 are MIT. The Cortico framework is MIT and ships as a submodule. To open a PR see [CONTRIBUTING.md](CONTRIBUTING.md); your first contribution needs a signed [Contributor License Agreement](CLA.md).
+[AGPL-3.0-or-later](LICENSE), with an additional permission under section 7 to link the Steamworks API libraries, which the Steam version loads. Releases up to and including 0.1.10 are MIT. The Cortico framework is MIT and ships as a submodule. To open a PR see [CONTRIBUTING.md](CONTRIBUTING.md); your first contribution needs a signed [Contributor License Agreement](CLA.md).
 
-The DeepSeek Whale artwork (the textures under `packages/cortico-world-desktop-pet/web/whale/`) is not covered by the AGPL; its origin and the vendor logos are described in the [desktop pet World's third-party notices](packages/cortico-world-desktop-pet/THIRD_PARTY_NOTICES.md). Third-party components shipped or downloaded at runtime: Electron (MIT), Cortico (MIT), sherpa-onnx (Apache-2.0), FunASR's SenseVoiceSmall model ([FunASR model license](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE), downloaded on use), koffi (MIT), jpeg-js (BSD-3-Clause), pnpm (MIT); model service logos come from [lobe-icons](https://github.com/lobehub/lobe-icons) (MIT; each logo belongs to its company and only identifies the service).
+The DeepSeek Whale artwork (the textures under `packages/cortico-world-desktop-pet/web/whale/`) is not covered by the AGPL; its origin and the vendor logos are described in the [desktop pet World's third-party notices](packages/cortico-world-desktop-pet/THIRD_PARTY_NOTICES.md). Third-party components shipped or downloaded at runtime: Electron (MIT), Cortico (MIT), sherpa-onnx (Apache-2.0), FunASR's SenseVoiceSmall model ([FunASR model license](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE), downloaded on use), OpenAI's Whisper small model (MIT, downloaded on use), koffi (MIT), jpeg-js (BSD-3-Clause), pnpm (MIT); model service logos come from [lobe-icons](https://github.com/lobehub/lobe-icons) (MIT; each logo belongs to its company and only identifies the service).

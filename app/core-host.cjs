@@ -4,12 +4,19 @@
  * The child is `core/boot.ts` under the app's own runtime in Node mode, with `--import tsx`.
  * It reports `companion:ready` with the console port. It exits on purpose after asking for a
  * restart (`cortico:restart`, or `<dataDir>/.restart-request` written by the console), and is
- * started again; an unexpected exit is restarted after 3 s, at most 5 times in 5 minutes. The next
+ * started again; an unexpected exit is restarted after 3 s, at most 5 times in 5 minutes, except one that
+ * said another process holds the data directory's lock (`companion:locked`), which is not restarted. The next
  * child started after an unexpected exit gets its exit code or signal in `COOPANION_CORE_EXIT`, for
- * the usage statistics.
+ * the usage statistics. Every start looks up the system proxy again (systemProxyEnvironment) and hands
+ * it to the child as proxy variables unless the environment already has its own.
+ *
+ * Events: `ready` ({ port, keyMissing, language }), `language` (the app language after a change),
+ * `state` (the state, and for an unexpected exit `{ kind: 'restarting', code }` or, once it stops
+ * retrying, `{ kind: 'failed', times, code, logFile }`, or for a lock held elsewhere `{ kind: 'locked', pid, file }`), and the Core's requests `open`, `hide`,
+ * `quit`, `update-install` and `releases`.
  */
 const { fork } = require('node:child_process');
-const { coreEnvironment } = require('./core-env.cjs');
+const { coreEnvironment, systemProxyEnvironment } = require('./core-env.cjs');
 const { EventEmitter } = require('node:events');
 const { createWriteStream, existsSync, mkdirSync, renameSync, statSync } = require('node:fs');
 const { join } = require('node:path');
@@ -19,7 +26,7 @@ const MAX_CRASHES = 5;
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
 class CoreHost extends EventEmitter {
-  /** @param {{ appRoot: string, env: NodeJS.ProcessEnv, logDir: string }} opts */
+  /** @param {{ appRoot: string, env: NodeJS.ProcessEnv, logDir: string, resolveProxy: (url: string) => Promise<string> }} opts */
   constructor(opts) {
     super();
     this.opts = opts;
@@ -29,23 +36,31 @@ class CoreHost extends EventEmitter {
     this.keyMissing = false;
     this.restartAsked = false;
     this.stopping = false;
+    /** The system proxy lookup before a start is running. */
+    this.launching = false;
     this.crashes = [];
+    /** The child said another process holds the data directory's lock (`companion:locked`): its PID and the lock file. */
+    this.locked = null;
     /** Exit code or signal of the last child that exited unasked, not yet handed to a new one. */
     this.unexpectedExit = null;
     this.state = 'stopped';
   }
 
-  start() {
-    if (this.child) return;
+  async start() {
+    if (this.child || this.launching) return;
+    this.launching = true;
+    const proxy = await systemProxyEnvironment(this.opts.env, this.opts.resolveProxy);
+    this.launching = false;
+    if (this.stopping) return;
     mkdirSync(this.opts.logDir, { recursive: true });
     const logFile = join(this.opts.logDir, 'core.log');
     if (existsSync(logFile) && statSync(logFile).size > LOG_ROTATE_BYTES) renameSync(logFile, join(this.opts.logDir, 'core.old.log'));
     const log = createWriteStream(logFile, { flags: 'a' });
-    log.write(`\n===== ${new Date().toISOString()} start =====\n`);
+    log.write(`\n===== ${new Date().toISOString()} start =====\n${proxy.note}\n`);
     const child = fork(join(this.opts.appRoot, 'core', 'boot.ts'), [], {
       cwd: this.opts.appRoot,
       execArgv: ['--use-env-proxy', '--import', 'tsx'],
-      env: coreEnvironment(this.unexpectedExit === null ? this.opts.env : { ...this.opts.env, COOPANION_CORE_EXIT: String(this.unexpectedExit) }),
+      env: coreEnvironment({ ...this.opts.env, ...proxy.vars, ...(this.unexpectedExit === null ? {} : { COOPANION_CORE_EXIT: String(this.unexpectedExit) }) }),
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     this.unexpectedExit = null;
@@ -61,10 +76,14 @@ class CoreHost extends EventEmitter {
         this.dataDir = msg.dataDir;
         this.keyMissing = !!msg.keyMissing;
         this.state = 'running';
-        this.emit('ready', { port: msg.port, keyMissing: this.keyMissing });
+        this.emit('ready', { port: msg.port, keyMissing: this.keyMissing, language: msg.language });
         this.emit('state', this.state);
+      } else if (msg?.type === 'companion:language') {
+        this.emit('language', msg.language);
       } else if (msg?.type === 'cortico:ready') {
         this.dataDir = msg.dataDir;
+      } else if (msg?.type === 'companion:locked') {
+        this.locked = { pid: Number.isInteger(msg.pid) ? msg.pid : null, file: String(msg.file ?? '') };
       } else if (msg?.type === 'cortico:restart') {
         this.restartAsked = true;
       } else if (msg?.type === 'companion:open') {
@@ -77,6 +96,8 @@ class CoreHost extends EventEmitter {
         this.emit('update-install');
       } else if (msg?.type === 'companion:releases') {
         this.emit('releases');
+      } else if (msg?.type === 'companion:browse' && typeof msg.url === 'string') {
+        this.emit('browse', msg.url);
       }
     });
     child.on('exit', (code, signal) => {
@@ -89,7 +110,15 @@ class CoreHost extends EventEmitter {
       if (this.restartAsked || flagged) {
         this.state = 'restarting';
         this.emit('state', this.state);
-        this.start();
+        void this.start();
+        return;
+      }
+      if (this.locked) {
+        // starting again would meet the same lock: the person ends that process, then restarts from the tray
+        const { pid, file } = this.locked;
+        this.locked = null;
+        this.state = 'failed';
+        this.emit('state', this.state, { kind: 'locked', pid, file });
         return;
       }
       this.unexpectedExit = code ?? signal;
@@ -98,12 +127,12 @@ class CoreHost extends EventEmitter {
       this.crashes.push(now);
       if (this.crashes.length > MAX_CRASHES) {
         this.state = 'failed';
-        this.emit('state', this.state, `Core 在 5 分钟内退出了 ${this.crashes.length} 次(退出码 ${code}),已停止重试。日志:${logFile}`);
+        this.emit('state', this.state, { kind: 'failed', times: this.crashes.length, code, logFile });
         return;
       }
       this.state = 'restarting';
-      this.emit('state', this.state, `Core 意外退出(退出码 ${code}),3 秒后重启`);
-      setTimeout(() => { if (!this.stopping) this.start(); }, 3000);
+      this.emit('state', this.state, { kind: 'restarting', code });
+      setTimeout(() => { if (!this.stopping) void this.start(); }, 3000);
     });
   }
 
@@ -127,7 +156,7 @@ class CoreHost extends EventEmitter {
   async restart() {
     await this.stop();
     this.stopping = false;
-    this.start();
+    await this.start();
   }
 }
 
