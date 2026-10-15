@@ -113,5 +113,5 @@ jobs:
 
           下载 zip,解压后运行 Install.cmd 安装;Check.cmd 只检查兼容性;Uninstall.cmd 还原成官方文件。官方升级后需要换用对应新版本的补丁。
           EOF
-            gh release create "$tag" dist/patch/*.zip dist/patch/*.sha256 --title "玩具补丁 $ver v$PV" --notes-file notes.md
+            gh release create "$tag" --target "$GITHUB_SHA" dist/patch/*.zip dist/patch/*.sha256 --title "玩具补丁 $ver v$PV" --notes-file notes.md
           fi
