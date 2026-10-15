@@ -1,0 +1,29 @@
+铁盆玩具 · Coopanion 桌宠补丁({{patchId}},{{createdAt}})
+给官方 Coopanion {{appVersion}} Windows x64 安装包装上桌宠的玩具(铁盆):
+拖到窗口或桌面空白处松手,它会翻倒摔出盆声。
+
+装法
+  1. 完整解压到任意文件夹,双击 Install.cmd。不要直接在压缩包内运行。
+  2. 脚本自动识别正在运行的软件、注册表、快捷方式和常见安装位置;多个副本会列出供选择,
+     未找到时会弹出窗口让你选 Coopanion.exe。
+  3. 装好后打开 Coopanion:装扮页最后一行给玩具挑图、起名;高级模式里桌宠 World 的配置页
+     有开关和响声。
+  4. 把铁盆拖到窗口上方或桌面空白处松手,它会翻倒摔出盆声。
+
+卸载
+  双击 Uninstall.cmd,或 Windows 设置 → 应用 →「Coopanion 铁盆玩具补丁」。
+  还原官方文件;原始备份和安装记录保留在安装目录 data\toy-patch\,便于追溯。
+  玩具的图、名字和设置在 data\ 里,卸载后仍在。
+
+检查
+  Check.cmd 只做兼容性检查,不改动任何文件:核对应用版本、目标文件哈希和安装包完整性。
+
+注意
+  - 补丁只写 resources\app\node_modules\cortico-world-desktop-pet\ 下的文件,装之前
+    逐文件核对基准版本 v{{appVersion}} 的 sha256;对不上会列出并停下,确认没问题可加
+    -Force 继续。
+  - 官方更新会替换 resources\ 目录,补丁随之失效;更新后运行对应新版本的补丁即可。
+  - 已验证 Coopanion {{appVersion}} Windows x64 的解包 resources/app 布局;其他源码
+    布局会在兼容性检查阶段停止。
+  - 不需要安装 Node.js 或其他运行时,用 Windows 自带的 PowerShell。
+  - 安装包未数字签名;许可 AGPL-3.0-or-later(与 Coopanion 相同)。
