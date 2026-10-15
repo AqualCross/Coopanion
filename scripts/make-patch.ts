@@ -1,10 +1,13 @@
 /**
  * Builds the toy patch package: `dist/patch/Coopanion-Toy-Patch-<app version>-v<n>.zip`.
  *
- * The patch carries only the desktop pet World's changed files. The app ships that package as plain
- * files under `resources/app/node_modules/cortico-world-desktop-pet` (electron-builder packs with
- * `asar: false`; the Core runs its TypeScript through tsx), so an official install gets the feature
- * by overwriting files — no installer build, no repackaging.
+ * The patch carries only the desktop pet World's changed files — and of those only the ones the
+ * packaging actually ships. The app ships that package as plain files under
+ * `resources/app/node_modules/cortico-world-desktop-pet` (electron-builder packs with `asar: false`;
+ * the Core runs its TypeScript through tsx), so an official install gets the feature by overwriting
+ * files — no installer build, no repackaging. A file the official install does not have (README.md
+ * of the package, `tests/`, `examples/` — electron-builder's default ignore list) must stay out of
+ * both the manifest and the payload: the check would refuse on every clean install otherwise.
  *
  * The zip holds `payload/` (the files, laid out as the install directory has them), `manifest.json`
  * (each shipped file's sha256, and the sha256 it had in the base version), `release-id.txt` (pins
@@ -34,8 +37,21 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 /** The World package: repository-relative, and the path it lives under in an installed app. */
 const PACKAGE = 'packages/cortico-world-desktop-pet';
 const INSTALLED = 'node_modules/cortico-world-desktop-pet';
-/** scripts/pack.ts does not ship `tests/`, so a patch has nothing to change there. */
-const NOT_SHIPPED = `${PACKAGE}/tests/`;
+/**
+ * electron-builder's default ignore list for a package under node_modules: the package root's
+ * README/CHANGELOG, test and example directories, and the package root's `.d.ts` files never reach
+ * an install. A patch may neither overlay nor require them. Verified against the official
+ * installer's `cortico-world-desktop-pet` (the only other packaging deltas are `dist/` build
+ * outputs and a `.ps1` line-ending rule, neither of which the manifest carries).
+ */
+const PACKED_OUT_FILES = new Set(['readme', 'readme.md', 'changelog.md']);
+const PACKED_OUT_DIRS = new Set(['test', '__tests__', 'tests', 'powered-test', 'example', 'examples']);
+/** Whether `rel` (package-relative, `/`-separated) exists in an official install. */
+function shippedByPackaging(rel: string): boolean {
+  const slash = rel.indexOf('/');
+  if (slash === -1) return !PACKED_OUT_FILES.has(rel.toLowerCase()) && !rel.endsWith('.d.ts');
+  return !PACKED_OUT_DIRS.has(rel.slice(0, slash));
+}
 /** Templates the zip carries beside the overlay; see installer/patch/. */
 const TEMPLATES = join(ROOT, 'installer', 'patch');
 
@@ -118,8 +134,14 @@ function main(): void {
       return { status: status!, path: rest.join('\t') };
     });
 
-  const shipped = changed.filter((c) => c.path.startsWith(`${PACKAGE}/`) && !c.path.startsWith(NOT_SHIPPED));
-  const extra = changed.filter((c) => !c.path.startsWith(`${PACKAGE}/`) || c.path.startsWith(NOT_SHIPPED));
+  const inPackage = changed.filter((c) => c.path.startsWith(`${PACKAGE}/`));
+  const shipped = inPackage.filter((c) => shippedByPackaging(c.path.slice(PACKAGE.length + 1)));
+  const skipped = inPackage.filter((c) => !shippedByPackaging(c.path.slice(PACKAGE.length + 1)));
+  const extra = changed.filter((c) => !c.path.startsWith(`${PACKAGE}/`));
+  if (skipped.length) {
+    const list = skipped.map((c) => `  ${c.status}  ${c.path}`).join('\n');
+    console.log(`这些改动随官方安装包发布不了(electron-builder 不打包它们),不进补丁:\n${list}`);
+  }
   if (extra.length) {
     const list = extra.map((c) => `  ${c.status}  ${c.path}`).join('\n');
     if (!opts.dropExtra) {
@@ -127,6 +149,9 @@ function main(): void {
         + '补丁只装世界包;这些改动该合并进上游、或留在自定义安装版里。确认要丢掉它们时加 --drop-extra。');
     }
     console.log(`警告:丢掉 ${extra.length} 个世界包之外的改动(不进补丁):\n${list}`);
+  }
+  if (shipped.some((c) => c.path.startsWith(`${PACKAGE}/src/console/`))) {
+    console.log('警告:src/console/ 的改动不会生效——安装目录里跑的是打包时构建的 dist/console.js,补丁不改它。');
   }
 
   const entries: Entry[] = [];
