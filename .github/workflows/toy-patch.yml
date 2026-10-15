@@ -1,0 +1,117 @@
+name: toy-patch
+
+# Builds the toy patch package (scripts/make-patch.ts) for the newest official release the branch has
+# merged, after the same five checks ci.yml runs. A push to `custom` builds one into the run's
+# artifacts; running the workflow by hand also attaches the zip to the GitHub release
+# `toy-<official version>-v<n>`, the download page for that patch. That tag is made with the run's
+# token, so it does not match release.yml's `v*` and starts no other workflow.
+on:
+  push:
+    branches: [custom]
+    paths:
+      - packages/cortico-world-desktop-pet/**
+      - installer/patch/**
+      - scripts/make-patch.ts
+      - pnpm-lock.yaml
+      - .github/workflows/toy-patch.yml
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 补丁叠在哪个官方 tag 上;留空取 custom 已合并进的最新官方 tag
+        required: false
+        default: ''
+      patch_version:
+        description: 同一官方版本上的补丁序号(第几版)
+        required: true
+        default: '1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: toy-patch-${{ github.ref_name }}-${{ inputs.patch_version || 'dev' }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: 确定基准官方 tag
+        id: base
+        env:
+          INPUT_BASE: ${{ inputs.base }}
+        run: |
+          set -euo pipefail
+          # the fork may not carry upstream's tags; fetch them so the base can be resolved and diffed
+          git fetch --no-tags 'https://github.com/Pal-AI-Lab/Coopanion.git' '+refs/tags/v*:refs/tags/v*'
+          base="$INPUT_BASE"
+          if [ -z "$base" ]; then
+            base=$(git tag --merged HEAD --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+          fi
+          if [ -z "$base" ] || ! git rev-parse -q --verify "refs/tags/$base^{commit}" >/dev/null; then
+            echo "::error::找不到基准 tag「$base」:先把对应的官方发布合并进 custom,或把 tag 名填对"
+            exit 1
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "基准:$base"
+      - name: 定补丁序号
+        id: pv
+        env:
+          INPUT_PV: ${{ inputs.patch_version }}
+        run: |
+          set -euo pipefail
+          pv="${INPUT_PV:-0}"
+          echo "value=$pv" >> "$GITHUB_OUTPUT"
+          if [ "$pv" = 0 ]; then
+            echo '推送构建,不挂 Release(序号 0 是给推送构建用的开发版)'
+          fi
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: pnpm run build:cortico
+      - run: pnpm run typecheck
+      - run: pnpm run typecheck:web
+      - run: pnpm run test
+      - run: pnpm run typecheck:worlds
+      - run: pnpm run test:worlds
+      - name: 生成补丁包
+        env:
+          BASE: ${{ steps.base.outputs.base }}
+          PV: ${{ steps.pv.outputs.value }}
+        run: pnpm exec tsx scripts/make-patch.ts --base "$BASE" --patch-version "$PV" --drop-extra
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toy-patch-${{ steps.base.outputs.base }}-v${{ steps.pv.outputs.value }}
+          path: |
+            dist/patch/*.zip
+            dist/patch/*.sha256
+          if-no-files-found: error
+      - name: 挂到 Release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.base.outputs.base }}
+          PV: ${{ steps.pv.outputs.value }}
+        run: |
+          set -euo pipefail
+          ver="${BASE#v}"
+          tag="toy-${ver}-v${PV}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/patch/*.zip dist/patch/*.sha256 --clobber
+          else
+            cat > notes.md <<EOF
+          官方 Coopanion $ver 的玩具补丁,同一官方版本上的第 $PV 版。
+
+          下载 zip,解压后运行 Install.cmd 安装;Check.cmd 只检查兼容性;Uninstall.cmd 还原成官方文件。官方升级后需要换用对应新版本的补丁。
+          EOF
+            gh release create "$tag" dist/patch/*.zip dist/patch/*.sha256 --title "玩具补丁 $ver v$PV" --notes-file notes.md
+          fi
